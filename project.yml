@@ -1,0 +1,68 @@
+name: UberProfitApp
+options:
+  bundleIdPrefix: com.uberprofit
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+
+targets:
+  UberProfitApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/UberProfitApp
+    info:
+      path: Sources/UberProfitApp/Info.plist
+      properties:
+        CFBundleDisplayName: "UberProfit"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIBackgroundModes:
+          - audio
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.uberprofit.app.refresh
+        NSLocalNetworkUsageDescription: "Necessário para receber em tempo real os dados da captura de tela da extensão via loopback UDP local."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.uberprofit.app
+        INFOPLIST_FILE: Sources/UberProfitApp/Info.plist
+        ENABLE_BITCODE: "NO"
+    dependencies:
+      - target: ScreenReaderExtension
+        embed: true
+
+  ScreenReaderExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/ScreenReaderExtension
+    info:
+      path: Sources/ScreenReaderExtension/Info.plist
+      properties:
+        CFBundleDisplayName: "UberProfit ScreenReader"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).SampleHandler"
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.uberprofit.app.ScreenReaderExtension
+        INFOPLIST_FILE: Sources/ScreenReaderExtension/Info.plist
+        SKIP_INSTALL: "YES"
+        ENABLE_BITCODE: "NO"
