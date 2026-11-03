@@ -1,0 +1,58 @@
+name: Build Unsigned IPA
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    name: Build UberProfitApp IPA (Unsigned for Sideloadly/SideStore)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+
+      - name: Generate Xcode Project
+        run: |
+          xcodegen generate
+
+      - name: Build Unsigned Release App & Broadcast Extension
+        run: |
+          xcodebuild clean build \
+            -project UberProfitApp.xcodeproj \
+            -scheme UberProfitApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package Payload into UberProfitApp.ipa
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "UberProfitApp.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Erro: UberProfitApp.app não encontrado!"
+            exit 1
+          fi
+          cp -R "$APP_PATH" Payload/
+          zip -r9 UberProfitApp.ipa Payload
+
+      - name: Upload UberProfitApp.ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UberProfitApp-IPA
+          path: UberProfitApp.ipa
+          if-no-files-found: error
+          retention-days: 30
