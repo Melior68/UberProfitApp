@@ -53,8 +53,9 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         controller.requiresLinearPlayback = true
 
         statusObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] ctrl, _ in
+            let possible = ctrl.isPictureInPicturePossible
             Task { @MainActor in
-                self?.isPiPPossible = ctrl.isPictureInPicturePossible
+                self?.isPiPPossible = possible
             }
         }
 
