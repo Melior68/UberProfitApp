@@ -73,6 +73,13 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         }
     }
 
+    public func setAutoStartEnabled(_ enabled: Bool) {
+        pipController?.canStartPictureInPictureAutomaticallyFromInline = enabled
+        if !enabled {
+            stopPiPIfActive()
+        }
+    }
+
     public func stopPiPIfActive() {
         guard let pipController, pipController.isPictureInPictureActive else { return }
         pipController.stopPictureInPicture()

@@ -170,14 +170,77 @@ public struct ContentView: View {
                     .foregroundStyle(udpListener.broadcastActive ? .green : .secondary)
             }
 
-            PiPLayerContainerView(displayLayer: pipManager.displayLayer)
-                .frame(height: 155)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2)
-                )
+            if visualAlertMode == .notificationOnly {
+                nativePreviewCard
+            } else {
+                PiPLayerContainerView(displayLayer: pipManager.displayLayer)
+                    .frame(height: 155)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2)
+                    )
+            }
         }
+    }
+
+    private var nativePreviewCard: some View {
+        let analysis = latestAnalysis
+        let bgColor: Color = {
+            guard let analysis else { return Color(red: 0.08, green: 0.10, blue: 0.14) }
+            switch analysis.verdict {
+            case .approved: return Color(red: 0.06, green: 0.56, blue: 0.24)
+            case .warning: return Color(red: 0.78, green: 0.52, blue: 0.02)
+            case .rejected: return Color(red: 0.72, green: 0.10, blue: 0.14)
+            }
+        }()
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(bgColor)
+
+            if let analysis {
+                VStack(spacing: 10) {
+                    Text("\(analysis.offer.appSource) • \(analysis.verdict.rawValue) • LUCRO R$ \(String(format: "%.2f", analysis.netProfitBRL).replacingOccurrences(of: ".", with: ","))")
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.28))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    HStack {
+                        Text(String(format: "R$ %.2f/km", analysis.grossPerKm).replacingOccurrences(of: ".", with: ","))
+                            .font(.system(size: 30, weight: .black))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Text(String(format: "R$ %.0f/h", analysis.grossPerHour))
+                            .font(.system(size: 30, weight: .black))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 16)
+
+                    Text(String(format: "Tarifa R$ %.2f • %.1f km total • %d min • Comb. -R$ %.2f", analysis.offer.fareBRL, analysis.offer.totalDistanceKm, analysis.offer.totalMinutes, analysis.fuelCostBRL).replacingOccurrences(of: ".", with: ","))
+                        .font(.caption.bold())
+                        .foregroundStyle(.white.opacity(0.95))
+                }
+                .padding(12)
+            } else {
+                VStack(spacing: 6) {
+                    Text("MODO SÓ NOTIFICAÇÃO ATIVO")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(.white)
+                    Text("Janela PiP desativada • Alertando por Banner e Voz")
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                }
+            }
+        }
+        .frame(height: 155)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2)
+        )
     }
 
     private var shiftControlsSection: some View {
@@ -289,8 +352,9 @@ public struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: visualAlertModeRaw) { newValue in
-                if newValue == VisualAlertMode.notificationOnly.rawValue {
-                    pipManager.stopPiPIfActive()
+                let isNotificationOnly = (newValue == VisualAlertMode.notificationOnly.rawValue)
+                pipManager.setAutoStartEnabled(!isNotificationOnly)
+                if isNotificationOnly {
                     notificationManager.requestAuthorizationIfNeeded()
                 }
             }
@@ -521,6 +585,7 @@ public struct ContentView: View {
     private func startBackgroundServices() {
         keepAlive.start()
         notificationManager.requestAuthorizationIfNeeded()
+        pipManager.setAutoStartEnabled(visualAlertMode != .notificationOnly)
 
         voiceManager.onSpeechFinished = { [weak keepAlive] in
             keepAlive?.ensureEnginePlaying()
