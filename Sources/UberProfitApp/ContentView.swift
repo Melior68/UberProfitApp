@@ -44,15 +44,13 @@ public struct PiPLayerContainerView: UIViewRepresentable {
     }
 }
 
-/// Botão nativo do ReplayKit (`RPSystemBroadcastPickerView`) para iniciar a captura de tela em 1 toque
+/// Botão nativo do ReplayKit (`RPSystemBroadcastPickerView`) para iniciar/parar a captura de tela em 1 toque
 public struct BroadcastPickerRepresentable: UIViewRepresentable {
     public init() {}
 
     public func makeUIView(context: Context) -> RPSystemBroadcastPickerView {
-        let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 64, height: 64))
+        let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 220, height: 54))
         picker.showsMicrophoneButton = false
-        // Como no Sideloadly/SideStore o Bundle ID ganha sufixo do time gratuito, deixamos nil
-        // ou filtramos automaticamente para permitir selecionar a ScreenReaderExtension sem travas.
         picker.preferredExtension = nil
         return picker
     }
@@ -64,19 +62,27 @@ public struct BroadcastPickerRepresentable: UIViewRepresentable {
 public struct ContentView: View {
     @AppStorage("targetBRLPerKm") private var targetBRLPerKm: Double = 2.00
     @AppStorage("targetBRLPerHour") private var targetBRLPerHour: Double = 40.00
-    @AppStorage("carConsumptionKmPerLiter") private var carConsumptionKmPerLiter: Double = 11.5
-    @AppStorage("fuelPriceBRLPerLiter") private var fuelPriceBRLPerLiter: Double = 5.89
+    @AppStorage("carConsumptionKmPerLiter") private var carConsumptionKmPerLiter: Double = 10.0
+    @AppStorage("fuelPriceBRLPerLiter") private var fuelPriceBRLPerLiter: Double = 6.35
     @AppStorage("voiceAlertsEnabled") private var voiceAlertsEnabled: Bool = true
+    @AppStorage("evaluateUsingNetProfit") private var evaluateUsingNetProfit: Bool = false
+    @AppStorage("visualAlertModeRaw") private var visualAlertModeRaw: String = VisualAlertMode.both.rawValue
 
     @StateObject private var keepAlive = BackgroundKeepAlive()
     @StateObject private var udpListener = UDPListenerManager()
     @StateObject private var voiceManager = VoiceAlertManager()
     @StateObject private var pipManager = PiPOverlayManager()
+    @StateObject private var notificationManager = NotificationAlertManager()
 
     @State private var latestAnalysis: RideAnalysis?
     @State private var history: [RideAnalysis] = []
+    @State private var selectedItemForOCRDebug: RideAnalysis?
 
     public init() {}
+
+    private var visualAlertMode: VisualAlertMode {
+        VisualAlertMode(rawValue: visualAlertModeRaw) ?? .both
+    }
 
     private var currentSettings: DriverSettings {
         DriverSettings(
@@ -84,7 +90,8 @@ public struct ContentView: View {
             targetBRLPerHour: targetBRLPerHour,
             carConsumptionKmPerLiter: carConsumptionKmPerLiter,
             fuelPriceBRLPerLiter: fuelPriceBRLPerLiter,
-            voiceAlertsEnabled: voiceAlertsEnabled
+            voiceAlertsEnabled: voiceAlertsEnabled,
+            evaluateUsingNetProfit: evaluateUsingNetProfit
         )
     }
 
@@ -92,19 +99,27 @@ public struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
-                    // Preview ao vivo do Card do PiP
+                    // Preview ao vivo do Card
                     pipPreviewSection
 
-                    // Botões de Controle do Turno (Broadcast + PiP + KeepAlive)
+                    // Botões de Controle do Turno (Status Real do Leitor + Modo de Alerta)
                     shiftControlsSection
+
+                    // Seletor: Só Notificação, Só PiP ou Ambos
+                    alertModeSection
+
+                    // Resumo Estatístico do Turno (se houver corridas lidas)
+                    if !history.isEmpty {
+                        shiftStatsSection
+                    }
 
                     // Sliders de Metas e Custos do Veículo
                     settingsSlidersSection
 
-                    // Botão de Simulação para testar Voz e PiP antes de sair
+                    // Simulador para testar Voz, Notificação Banner e PiP
                     testSimulationSection
 
-                    // Histórico recente de ofertas lidas no turno
+                    // Histórico recente de ofertas lidas (com toque para ver OCR bruto)
                     if !history.isEmpty {
                         recentOffersSection
                     }
@@ -112,10 +127,30 @@ public struct ContentView: View {
                 .padding()
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("UberProfit Auto")
+            .navigationTitle("Uber & 99 Profit Auto")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 startBackgroundServices()
+            }
+            .sheet(item: $selectedItemForOCRDebug) { item in
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Texto Bruto Lido pelo OCR:")
+                                .font(.headline)
+                            Text(item.offer.rawRecognizedText)
+                                .font(.system(.body, design: .monospaced))
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .padding()
+                    }
+                    .navigationTitle("Diagnóstico OCR (\(item.offer.appSource))")
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+                .presentationDetents([.medium])
             }
         }
     }
@@ -124,15 +159,15 @@ public struct ContentView: View {
     private var pipPreviewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Card Flutuante (PiP)", systemImage: "pip")
+                Label("Painel em Tempo Real", systemImage: "gauge.with.dots.needle.67percent")
                     .font(.headline)
                 Spacer()
                 Circle()
-                    .fill(udpListener.isListening ? Color.green : Color.red)
+                    .fill(udpListener.broadcastActive ? Color.green : (udpListener.isListening ? Color.orange : Color.red))
                     .frame(width: 10, height: 10)
-                Text(udpListener.isListening ? "UDP 9876 Ativo" : "UDP Offline")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(udpListener.broadcastActive ? "Leitor Capturando" : (udpListener.isListening ? "UDP 9876 Pronto" : "UDP Offline"))
+                    .font(.caption.bold())
+                    .foregroundStyle(udpListener.broadcastActive ? .green : .secondary)
             }
 
             PiPLayerContainerView(displayLayer: pipManager.displayLayer)
@@ -140,43 +175,83 @@ public struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                        .stroke(udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2)
                 )
         }
     }
 
     private var shiftControlsSection: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
+                // Botão 1: Muda automaticamente quando o Leitor de Tela já está ligado!
                 ZStack {
                     RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.blue)
-                    HStack {
-                        Image(systemName: "record.circle.fill")
-                            .font(.title2)
+                        .fill(udpListener.broadcastActive ? Color.red : Color.blue)
+                    HStack(spacing: 8) {
+                        Image(systemName: udpListener.broadcastActive ? "stop.circle.fill" : "record.circle.fill")
+                            .font(.title3)
                             .foregroundStyle(.white)
-                        Text("1. Iniciar Leitor de Tela")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(.white)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(udpListener.broadcastActive ? "Leitor Ativo" : "1. Iniciar Leitor")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                            Text(udpListener.broadcastActive ? "Toque p/ parar" : "Toque p/ ligar")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
                     }
+                    .padding(.horizontal, 8)
+
                     BroadcastPickerRepresentable()
-                        .frame(width: 220, height: 52)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .blendMode(.destinationOver)
                 }
-                .frame(height: 54)
+                .frame(height: 56)
 
-                Button {
-                    pipManager.togglePiP()
-                } label: {
-                    HStack {
-                        Image(systemName: pipManager.isPiPActive ? "pip.exit" : "pip.enter")
-                        Text(pipManager.isPiPActive ? "Fechar PiP" : "2. Abrir PiP")
-                            .font(.subheadline.bold())
+                // Botão 2: Abrir/Fechar PiP (ou Testar Banner se estiver no modo Só Notificação)
+                if visualAlertMode != .notificationOnly {
+                    Button {
+                        pipManager.togglePiP()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: pipManager.isPiPActive ? "pip.exit" : "pip.enter")
+                                .font(.title3)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(pipManager.isPiPActive ? "PiP Ativo" : "2. Abrir PiP")
+                                    .font(.subheadline.bold())
+                                Text(pipManager.isPiPActive ? "Toque p/ fechar" : "Janela flutuante")
+                                    .font(.caption2)
+                                    .opacity(0.85)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(pipManager.isPiPActive ? Color.orange : Color.green)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 54)
-                    .background(pipManager.isPiPActive ? Color.orange : Color.green)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                } else {
+                    Button {
+                        notificationManager.requestAuthorizationIfNeeded()
+                        if let latest = latestAnalysis {
+                            notificationManager.sendRideBanner(analysis: latest)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "bell.badge.fill")
+                                .font(.title3)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Modo Banner")
+                                    .font(.subheadline.bold())
+                                Text("Sem janela PiP")
+                                    .font(.caption2)
+                                    .opacity(0.85)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(Color.indigo)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
                 }
             }
 
@@ -202,10 +277,80 @@ public struct ContentView: View {
         }
     }
 
+    private var alertModeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Formato do Alerta Visual na Tela")
+                .font(.subheadline.bold())
+
+            Picker("Modo Visual", selection: $visualAlertModeRaw) {
+                ForEach(VisualAlertMode.allCases, id: \.rawValue) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: visualAlertModeRaw) { newValue in
+                if newValue == VisualAlertMode.notificationOnly.rawValue {
+                    pipManager.stopPiPIfActive()
+                    notificationManager.requestAuthorizationIfNeeded()
+                }
+            }
+
+            Text(
+                visualAlertMode == .notificationOnly
+                ? "Envia apenas uma Notificação (Banner no topo) quando a corrida toca, deixando o mapa 100% livre."
+                : (visualAlertMode == .pipOnly
+                   ? "Usa apenas a janela flutuante Picture-in-Picture sobre a Uber/99."
+                   : "Usa ambos: atualiza a janela PiP e também dispara o Banner de Notificação no topo.")
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var shiftStatsSection: some View {
+        let approvedCount = history.filter { $0.verdict == .approved }.count
+        let warningCount = history.filter { $0.verdict == .warning }.count
+        let rejectedCount = history.filter { $0.verdict == .rejected }.count
+        let avgKm = history.map(\.grossPerKm).reduce(0, +) / Double(max(history.count, 1))
+
+        return HStack(spacing: 12) {
+            statBadge(title: "Boas", value: "\(approvedCount)", color: .green)
+            statBadge(title: "Atenção", value: "\(warningCount)", color: .orange)
+            statBadge(title: "Recusadas", value: "\(rejectedCount)", color: .red)
+            statBadge(
+                title: "Média/km",
+                value: String(format: "R$ %.2f", avgKm).replacingOccurrences(of: ".", with: ","),
+                color: .blue
+            )
+        }
+    }
+
+    private func statBadge(title: String, value: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.subheadline.bold())
+                .foregroundStyle(color)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
     private var settingsSlidersSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Metas & Custo do Veículo")
-                .font(.headline)
+            HStack {
+                Text("Metas & Custo do Veículo")
+                    .font(.headline)
+                Spacer()
+                CostPerKmBadge(consumption: carConsumptionKmPerLiter, fuelPrice: fuelPriceBRLPerLiter)
+            }
 
             // Meta de R$/km
             VStack(alignment: .leading, spacing: 4) {
@@ -260,6 +405,18 @@ public struct ContentView: View {
                 }
                 Slider(value: $fuelPriceBRLPerLiter, in: 3.00...9.00, step: 0.05)
             }
+
+            Divider()
+
+            Toggle(isOn: $evaluateUsingNetProfit) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Avaliar Meta pelo Lucro Líquido")
+                        .font(.subheadline)
+                    Text("Se ativo, exige a meta de R$/km já descontando a gasolina")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding()
         .background(Color(.secondarySystemGroupedBackground))
@@ -268,21 +425,22 @@ public struct ContentView: View {
 
     private var testSimulationSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Testar Alertas e PiP (Simulador)")
+            Text("Testar Alertas (Voz + Banner + PiP)")
                 .font(.caption.bold())
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
-                Button("Simular Corrida Boa") {
+                Button("Simular Uber Boa") {
                     let mock = RideOfferPayload(
-                        fareBRL: 26.40,
-                        pickupDistanceKm: 1.5,
-                        tripDistanceKm: 9.5,
-                        totalDistanceKm: 11.0,
-                        pickupMinutes: 4,
-                        tripMinutes: 20,
-                        totalMinutes: 24,
-                        rawRecognizedText: "Simulação Boa",
+                        appSource: "UBER",
+                        fareBRL: 22.80,
+                        pickupDistanceKm: 0.8,
+                        tripDistanceKm: 7.2,
+                        totalDistanceKm: 8.0,
+                        pickupMinutes: 3,
+                        tripMinutes: 15,
+                        totalMinutes: 18,
+                        rawRecognizedText: "UberX Exclusivo\nR$ 22,80\n18 min • 8.0 km • Est. de R$2,85/km\n3 min (0.8 km)\n15 minutos (7.2 km)\nAceitar",
                         timestamp: Date().timeIntervalSince1970
                     )
                     processIncomingOffer(mock)
@@ -290,16 +448,17 @@ public struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
 
-                Button("Simular Corrida Ruim") {
+                Button("Simular 99 Ruim") {
                     let mock = RideOfferPayload(
-                        fareBRL: 11.20,
-                        pickupDistanceKm: 3.2,
-                        tripDistanceKm: 6.8,
-                        totalDistanceKm: 10.0,
-                        pickupMinutes: 8,
-                        tripMinutes: 19,
-                        totalMinutes: 27,
-                        rawRecognizedText: "Simulação Ruim",
+                        appSource: "99",
+                        fareBRL: 10.32,
+                        pickupDistanceKm: 1.4,
+                        tripDistanceKm: 6.6,
+                        totalDistanceKm: 8.0,
+                        pickupMinutes: 5,
+                        tripMinutes: 18,
+                        totalMinutes: 23,
+                        rawRecognizedText: "99Pop\nR$ 10,32\n5 min (1.4 km)\n18 min (6.6 km)\nAceitar",
                         timestamp: Date().timeIntervalSince1970
                     )
                     processIncomingOffer(mock)
@@ -313,33 +472,47 @@ public struct ContentView: View {
 
     private var recentOffersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Últimas Ofertas Lidas")
-                .font(.headline)
-
-            ForEach(history.prefix(8)) { item in
-                HStack {
-                    Circle()
-                        .fill(color(for: item.verdict))
-                        .frame(width: 12, height: 12)
-                    VStack(alignment: .leading) {
-                        Text(String(format: "R$ %.2f • %.1f km • %d min", item.offer.fareBRL, item.offer.totalDistanceKm, item.offer.totalMinutes).replacingOccurrences(of: ".", with: ","))
-                            .font(.subheadline.bold())
-                        Text(String(format: "Líquido: R$ %.2f (Comb: -R$ %.2f)", item.netProfitBRL, item.fuelCostBRL).replacingOccurrences(of: ".", with: ","))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing) {
-                        Text(String(format: "R$ %.2f/km", item.grossPerKm).replacingOccurrences(of: ".", with: ","))
-                            .font(.subheadline.bold())
-                        Text(String(format: "R$ %.0f/h", item.grossPerHour))
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                    }
+            HStack {
+                Text("Últimas Ofertas Lidas (Toque p/ ver OCR)")
+                    .font(.headline)
+                Spacer()
+                Button("Limpar") {
+                    history.removeAll()
                 }
-                .padding(12)
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .font(.caption)
+            }
+
+            ForEach(history.prefix(12)) { item in
+                Button {
+                    selectedItemForOCRDebug = item
+                } label: {
+                    HStack {
+                        Circle()
+                            .fill(color(for: item.verdict))
+                            .frame(width: 12, height: 12)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(String(format: "[%@] R$ %.2f • %.1f km • %d min", item.offer.appSource, item.offer.fareBRL, item.offer.totalDistanceKm, item.offer.totalMinutes).replacingOccurrences(of: ".", with: ","))
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.primary)
+                            Text(String(format: "Líquido: R$ %.2f (Comb: -R$ %.2f)", item.netProfitBRL, item.fuelCostBRL).replacingOccurrences(of: ".", with: ","))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(String(format: "R$ %.2f/km", item.grossPerKm).replacingOccurrences(of: ".", with: ","))
+                                .font(.subheadline.bold())
+                                .foregroundStyle(color(for: item.verdict))
+                            Text(String(format: "R$ %.0f/h", item.grossPerHour))
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -347,6 +520,12 @@ public struct ContentView: View {
     // MARK: - Inicialização e Pipeline de Ofertas
     private func startBackgroundServices() {
         keepAlive.start()
+        notificationManager.requestAuthorizationIfNeeded()
+
+        voiceManager.onSpeechFinished = { [weak keepAlive] in
+            keepAlive?.ensureEnginePlaying()
+        }
+
         udpListener.onOfferReceived = { offer in
             processIncomingOffer(offer)
         }
@@ -357,7 +536,16 @@ public struct ContentView: View {
         let analysis = ProfitCalculator.evaluate(offer: offer, settings: currentSettings)
         latestAnalysis = analysis
         history.insert(analysis, at: 0)
+
+        // Atualiza card do PiP (sempre atualiza o preview e o PiP se ativo)
         pipManager.updateCard(with: analysis)
+
+        // Se o motorista escolheu "Só Notificação" ou "Notificação + PiP", envia o Banner imediato
+        if visualAlertMode == .notificationOnly || visualAlertMode == .both {
+            notificationManager.sendRideBanner(analysis: analysis)
+        }
+
+        // Alerta de voz + bipe
         voiceManager.announce(analysis: analysis, enabled: voiceAlertsEnabled)
     }
 
@@ -367,5 +555,21 @@ public struct ContentView: View {
         case .warning: return .orange
         case .rejected: return .red
         }
+    }
+}
+
+private struct CostPerKmBadge: View {
+    let consumption: Double
+    let fuelPrice: Double
+
+    var body: some View {
+        let costPerKm = fuelPrice / max(consumption, 1.0)
+        Text(String(format: "Custo: R$ %.2f/km", costPerKm).replacingOccurrences(of: ".", with: ","))
+            .font(.caption.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.orange.opacity(0.15))
+            .foregroundStyle(.orange)
+            .clipShape(Capsule())
     }
 }

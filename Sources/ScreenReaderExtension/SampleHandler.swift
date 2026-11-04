@@ -6,6 +6,7 @@ import UIKit
 
 /// Payload compartilhado enviado via UDP local para o App Principal
 public struct RideOfferPayload: Codable, Sendable {
+    public let appSource: String // "UBER" ou "99"
     public let fareBRL: Double
     public let pickupDistanceKm: Double
     public let tripDistanceKm: Double
@@ -17,21 +18,51 @@ public struct RideOfferPayload: Codable, Sendable {
     public let timestamp: TimeInterval
 }
 
+private struct RecognizedLine {
+    let text: String
+    let midY: CGFloat
+    let height: CGFloat
+}
+
 @objc(SampleHandler)
 public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
 
     // MARK: - Configurações de Performance e Limites
     private let throttleInterval: TimeInterval = 0.40 // 1 frame a cada 0.4s
+    private let heartbeatInterval: TimeInterval = 2.0 // Pulso a cada 2.0s para manter status "Leitor Ativo" na UI
     private let debounceInterval: TimeInterval = 12.0 // Ignora a mesma oferta por 12s
     private let udpHost: NWEndpoint.Host = "127.0.0.1"
     private let udpPort: NWEndpoint.Port = 9876
 
     // MARK: - Estado Interno
     private var lastProcessedTime: TimeInterval = 0
+    private var lastHeartbeatTime: TimeInterval = 0
     private var recentOfferHashes: [Int: TimeInterval] = [:]
     private var isProcessingFrame: Bool = false
     private var udpConnection: NWConnection?
     private let processingQueue = DispatchQueue(label: "com.uberprofit.screenreader.vision", qos: .userInteractive)
+
+    // MARK: - Regex Pré-Compiladas (Zero Alocação por Frame)
+    private static let priceRegex = try! NSRegularExpression(
+        pattern: #"(?<!\+)\b(?:R\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)"#,
+        options: [.caseInsensitive]
+    )
+    private static let uberStepRegex = try! NSRegularExpression(
+        pattern: #"(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*\(\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)"#,
+        options: [.caseInsensitive]
+    )
+    private static let uberSummaryRegex = try! NSRegularExpression(
+        pattern: #"(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*[•·\-]\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\b"#,
+        options: [.caseInsensitive]
+    )
+    private static let genericDistanceRegex = try! NSRegularExpression(
+        pattern: #"(?<!/)\b(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\b(?!\s*/)"#,
+        options: [.caseInsensitive]
+    )
+    private static let genericDurationRegex = try! NSRegularExpression(
+        pattern: #"(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\b"#,
+        options: [.caseInsensitive]
+    )
 
     // MARK: - Ciclo de Vida do ReplayKit
     public override func broadcastStarted(withSetupInfo setupInfo: [String : NSObject]?) {
@@ -58,6 +89,13 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
         guard sampleBufferType == .video else { return }
 
         let now = CACurrentMediaTime()
+
+        // Envia Heartbeat periódico para o App Principal saber que a extensão está viva e capturando
+        if (now - lastHeartbeatTime) >= heartbeatInterval {
+            lastHeartbeatTime = now
+            sendPingStatus(status: "BROADCAST_ACTIVE")
+        }
+
         guard (now - lastProcessedTime) >= throttleInterval, !isProcessingFrame else {
             return
         }
@@ -72,21 +110,21 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
         let orientationRaw = CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? UInt32
         let cgOrientation = CGImagePropertyOrientation(rawValue: orientationRaw ?? CGImagePropertyOrientation.up.rawValue) ?? .up
 
-        // Processamento síncrono com autoreleasepool rigoroso para respeitar o limite de 50 MB de RAM das extensões iOS
+        // Processamento síncrono dentro de autoreleasepool rigoroso para nunca ultrapassar o limite de 50 MB de RAM
         autoreleasepool {
             defer { isProcessingFrame = false }
             performFastOCR(on: pixelBuffer, orientation: cgOrientation, timestamp: Date().timeIntervalSince1970)
         }
     }
 
-    // MARK: - OCR de Baixa Latência e Baixa Memória
+    // MARK: - OCR de Baixa Latência com Filtro Anti-AutoLeitura
     private func performFastOCR(on pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, timestamp: TimeInterval) {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0.012
-        // 65% inferiores da tela para cobrir integralmente os cards da Uber Driver e da 99 Motorista
-        request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.65)
+        request.minimumTextHeight = 0.011
+        // 70% inferiores da tela para cobrir integralmente os cards da Uber e da 99 Motorista
+        request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.70)
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
@@ -99,20 +137,33 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             return
         }
 
-        // Ordena de cima para baixo (no Vision, maior Y = mais alto na tela)
+        // Ordena de cima para baixo (maior midY no Vision = mais alto na tela)
         let sortedObservations = observations.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
 
-        var lines: [String] = []
-        lines.reserveCapacity(sortedObservations.count)
+        var recognizedLines: [RecognizedLine] = []
+        recognizedLines.reserveCapacity(sortedObservations.count)
 
-        for observation in sortedObservations {
-            if let topCandidate = observation.topCandidates(1).first {
-                lines.append(topCandidate.string)
+        for obs in sortedObservations {
+            guard let candidate = obs.topCandidates(1).first else { continue }
+            let clean = candidate.string.replacingOccurrences(of: "\u{00A0}", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { continue }
+
+            // Filtra linhas que pertençam à nossa própria janela PiP ou Notificação caso estejam na parte de baixo
+            if isSelfOverlayLine(clean) {
+                continue
             }
+
+            recognizedLines.append(
+                RecognizedLine(
+                    text: clean,
+                    midY: obs.boundingBox.midY,
+                    height: obs.boundingBox.height
+                )
+            )
         }
 
-        let fullText = lines.joined(separator: "\n")
-        guard let payload = parseRideCard(from: fullText, lines: lines, timestamp: timestamp) else {
+        guard !recognizedLines.isEmpty,
+              let payload = parseRideCard(from: recognizedLines, timestamp: timestamp) else {
             return
         }
 
@@ -127,28 +178,61 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
         sendOfferViaUDP(payload)
     }
 
-    // MARK: - Extração Inteligente para Uber Driver e 99 Motorista
-    private func parseRideCard(from text: String, lines: [String], timestamp: TimeInterval) -> RideOfferPayload? {
-        let normalized = text.replacingOccurrences(of: "\u{00A0}", with: " ")
+    private func isSelfOverlayLine(_ line: String) -> Bool {
+        let upper = line.uppercased()
+        return upper.contains("UBER PROFIT") ||
+               upper.contains("UBERPROFIT") ||
+               upper.contains("LUCRO R$") ||
+               upper.contains("COMB. -R$") ||
+               upper.contains("KM TOTAL") ||
+               upper.contains("MONITORANDO OFERTAS")
+    }
 
-        // Ignora caso o próprio card do PiP tenha sido lido por engano
-        if normalized.contains("UBER PROFIT ATIVO") || normalized.contains("LUCRO R$") {
-            return nil
+    // MARK: - Parser Inteligente (Uber Driver + 99 Motorista)
+    private func parseRideCard(from lines: [RecognizedLine], timestamp: TimeInterval) -> RideOfferPayload? {
+        let fullText = lines.map(\.text).joined(separator: "\n")
+        let lowerFull = fullText.lowercased()
+
+        // Confirma que existe um botão/indicador de card de oferta real na tela para evitar ler tela de ganhos passados
+        let hasOfferContext = lowerFull.contains("aceitar") ||
+                              lowerFull.contains("tenho interesse") ||
+                              lowerFull.contains("exclusivo") ||
+                              lowerFull.contains("uberx") ||
+                              lowerFull.contains("priority") ||
+                              lowerFull.contains("comfort") ||
+                              lowerFull.contains("black") ||
+                              lowerFull.contains("flash") ||
+                              lowerFull.contains("moto") ||
+                              lowerFull.contains("99pop") ||
+                              lowerFull.contains("99plus") ||
+                              lowerFull.contains("99") ||
+                              lowerFull.contains("est. de") ||
+                              lowerFull.contains("min (")
+
+        guard hasOfferContext else { return nil }
+
+        // Detecta origem (Uber vs 99)
+        let appSource: String
+        if lowerFull.contains("99") || lowerFull.contains("negocia") || lowerFull.contains("poupa") {
+            appSource = "99"
+        } else {
+            appSource = "UBER"
         }
 
-        // 1. Extrai a Tarifa Principal em Reais (ignorando "+R$ X,XX" de dinâmico e "R$ X,XX/km" de estimativa)
+        // 1. Extrai Tarifa Principal priorizando a maior altura visual da fonte (BoundingBox Height)
         guard let fare = extractMainFareBRL(from: lines), fare >= 4.0, fare <= 950.0 else {
             return nil
         }
 
-        // 2. Extrai Distâncias e Tempos evitando duplicar a linha de resumo da Uber ("15 min • 5.4 km • Est. de R$1,91/km")
-        let (pickupKm, tripKm, totalKm, pickupMin, tripMin, totalMin) = extractDistancesAndDurations(from: lines, fullText: normalized)
+        // 2. Extrai Distâncias e Tempos com proteção contra soma duplicada da linha de resumo da Uber
+        let (pickupKm, tripKm, totalKm, pickupMin, tripMin, totalMin) = extractDistancesAndDurations(from: lines, fullText: fullText)
 
         guard totalKm >= 0.2, totalMin >= 1 else {
             return nil
         }
 
         return RideOfferPayload(
+            appSource: appSource,
             fareBRL: fare,
             pickupDistanceKm: pickupKm,
             tripDistanceKm: tripKm,
@@ -156,101 +240,123 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             pickupMinutes: pickupMin,
             tripMinutes: tripMin,
             totalMinutes: totalMin,
-            rawRecognizedText: normalized,
+            rawRecognizedText: fullText,
             timestamp: timestamp
         )
     }
 
-    private func extractMainFareBRL(from lines: [String]) -> Double? {
-        // Procura valores em R$ que NÃO sejam bônus "+R$" nem taxa "/km" ou "/h"
-        let pattern = #"(?<!\+)\b(?:R\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return nil
-        }
-
-        var candidates: [Double] = []
+    private func extractMainFareBRL(from lines: [RecognizedLine]) -> Double? {
+        var candidates: [(value: Double, height: CGFloat)] = []
 
         for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            // Ignora linhas de adicional ou estimativa por km
-            if trimmed.lowercased().contains("incluíd") || trimmed.lowercased().contains("est. de") {
+            let lower = line.text.lowercased()
+            // Ignora linhas de bônus adicional ("+R$ 2,12 incluída") ou estimativa por km ("Est. de R$1,91/km")
+            if lower.contains("incluíd") || lower.contains("incluid") || lower.contains("est. de") || lower.contains("/km") || lower.contains("/h") {
                 continue
             }
 
-            let nsRange = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
-            let matches = regex.matches(in: trimmed, options: [], range: nsRange)
+            let nsRange = NSRange(line.text.startIndex..<line.text.endIndex, in: line.text)
+            let matches = Self.priceRegex.matches(in: line.text, options: [], range: nsRange)
 
             for match in matches {
                 guard match.numberOfRanges > 1,
-                      let range = Range(match.range(at: 1), in: trimmed) else { continue }
-                let rawValue = trimmed[range].replacingOccurrences(of: ",", with: ".")
-                if let value = Double(rawValue), value >= 4.0 {
-                    candidates.append(value)
+                      let range = Range(match.range(at: 1), in: line.text) else { continue }
+                let rawValue = line.text[range].replacingOccurrences(of: ",", with: ".")
+                if let value = Double(rawValue), value >= 4.0, value <= 950.0 {
+                    candidates.append((value: value, height: line.height))
                 }
             }
         }
 
-        return candidates.max()
+        guard !candidates.isEmpty else { return nil }
+
+        // O preço principal da corrida na Uber e na 99 é sempre desenhado com a maior fonte do card.
+        // Se houver candidatos com pelo menos 75% da altura da maior fonte encontrada, pega o maior valor entre eles.
+        let maxHeight = candidates.map(\.height).max() ?? 0
+        let prominentCandidates = candidates.filter { $0.height >= maxHeight * 0.75 }
+        return prominentCandidates.map(\.value).max() ?? candidates.map(\.value).max()
     }
 
-    private func extractDistancesAndDurations(from lines: [String], fullText: String) -> (Double, Double, Double, Int, Int, Int) {
-        // CASO 1: Linha de resumo da Uber presente: ex: "15 min • 5.4 km • Est. de R$1,91/km"
-        // E/ou linhas detalhadas entre parênteses da Uber: "3 min (0.7 km)" e "12 minutos (4.7 km)"
-        var parenSteps: [(min: Int, km: Double)] = []
-        let uberStepPattern = #"(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*\(\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)"#
+    private func extractDistancesAndDurations(from lines: [RecognizedLine], fullText: String) -> (Double, Double, Double, Int, Int, Int) {
+        let nsFullRange = NSRange(fullText.startIndex..<fullText.endIndex, in: fullText)
 
-        if let stepRegex = try? NSRegularExpression(pattern: uberStepPattern, options: [.caseInsensitive]) {
-            let nsRange = NSRange(fullText.startIndex..<fullText.endIndex, in: fullText)
-            let matches = stepRegex.matches(in: fullText, options: [], range: nsRange)
-
-            for match in matches {
-                var hours = 0
-                if let hRange = Range(match.range(at: 1), in: fullText), let h = Int(fullText[hRange]) {
-                    hours = h
-                }
-                guard let mRange = Range(match.range(at: 2), in: fullText),
-                      let mins = Int(fullText[mRange]),
-                      let dRange = Range(match.range(at: 3), in: fullText),
-                      let uRange = Range(match.range(at: 4), in: fullText) else { continue }
-
-                let rawDist = fullText[dRange].replacingOccurrences(of: ",", with: ".")
-                guard let distVal = Double(rawDist) else { continue }
+        // 1. Verifica se existe a linha de resumo explícita da Uber: ex: "15 min • 5.4 km • Est. de R$1,91/km"
+        var summaryResult: (min: Int, km: Double)? = nil
+        if let match = Self.uberSummaryRegex.firstMatch(in: fullText, options: [], range: nsFullRange) {
+            var hours = 0
+            if let hRange = Range(match.range(at: 1), in: fullText), let h = Int(fullText[hRange]) {
+                hours = h
+            }
+            if let mRange = Range(match.range(at: 2), in: fullText),
+               let mins = Int(fullText[mRange]),
+               let dRange = Range(match.range(at: 3), in: fullText),
+               let uRange = Range(match.range(at: 4), in: fullText),
+               let distVal = Double(fullText[dRange].replacingOccurrences(of: ",", with: ".")) {
                 let unit = fullText[uRange].lowercased()
-                let distKm = (unit == "m") ? (distVal / 1000.0) : distVal
+                let km = (unit == "m") ? (distVal / 1000.0) : distVal
                 let totalMins = (hours * 60) + mins
-
-                if distKm > 0 && totalMins > 0 {
-                    parenSteps.append((min: totalMins, km: distKm))
+                if km > 0 && totalMins > 0 {
+                    summaryResult = (min: totalMins, km: km)
                 }
             }
         }
 
-        // Se encontrou os 2 passos detalhados da Uber (ex: "3 min (0.7 km)" e "12 minutos (4.7 km)"), usa a soma exata deles!
+        // 2. Verifica os passos detalhados entre parênteses da Uber: ex: "3 min (0.7 km)" e "12 minutos (4.7 km)"
+        var parenSteps: [(min: Int, km: Double)] = []
+        let stepMatches = Self.uberStepRegex.matches(in: fullText, options: [], range: nsFullRange)
+        for match in stepMatches {
+            var hours = 0
+            if let hRange = Range(match.range(at: 1), in: fullText), let h = Int(fullText[hRange]) {
+                hours = h
+            }
+            guard let mRange = Range(match.range(at: 2), in: fullText),
+                  let mins = Int(fullText[mRange]),
+                  let dRange = Range(match.range(at: 3), in: fullText),
+                  let uRange = Range(match.range(at: 4), in: fullText),
+                  let distVal = Double(fullText[dRange].replacingOccurrences(of: ",", with: ".")) else { continue }
+
+            let unit = fullText[uRange].lowercased()
+            let distKm = (unit == "m") ? (distVal / 1000.0) : distVal
+            let totalMins = (hours * 60) + mins
+
+            if distKm > 0 && totalMins > 0 {
+                parenSteps.append((min: totalMins, km: distKm))
+            }
+        }
+
+        // Se encontrou os 2 passos detalhados da Uber ("3 min (0.7 km)" + "12 minutos (4.7 km)")
         if parenSteps.count >= 2 {
             let pKm = parenSteps[0].km
             let tKm = parenSteps[1].km
             let pMin = parenSteps[0].min
             let tMin = parenSteps[1].min
-            return (pKm, tKm, pKm + tKm, pMin, tMin, pMin + tMin)
-        }
+            let sumKm = pKm + tKm
+            let sumMin = pMin + tMin
 
-        // CASO 2: Verifica se há a linha de resumo explícita da Uber ("15 min • 5.4 km") mesmo se o OCR perdeu um dos parênteses
-        let summaryPattern = #"(\d{1,3})\s*min\s*[•·\-]\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*km"#
-        if let sumRegex = try? NSRegularExpression(pattern: summaryPattern, options: [.caseInsensitive]) {
-            let nsRange = NSRange(fullText.startIndex..<fullText.endIndex, in: fullText)
-            if let match = sumRegex.firstMatch(in: fullText, options: [], range: nsRange),
-               let mRange = Range(match.range(at: 1), in: fullText),
-               let mins = Int(fullText[mRange]),
-               let dRange = Range(match.range(at: 2), in: fullText),
-               let km = Double(fullText[dRange].replacingOccurrences(of: ",", with: ".")) {
-                return (0.0, km, km, 0, mins, mins)
+            // Validação cruzada com a linha de resumo caso ambos existam
+            if let summary = summaryResult, summary.km > sumKm {
+                return (pKm, summary.km - pKm, summary.km, pMin, max(summary.min - pMin, 1), summary.min)
             }
+            return (pKm, tKm, sumKm, pMin, tMin, sumMin)
         }
 
-        // CASO 3: Formato 99 Motorista ou formato genérico sem linha de resumo duplicada
-        // Filtra linhas que contenham "/km" (estimativa) para não capturar números errados
-        let contentLines = lines.filter { !$0.lowercased().contains("/km") }
-        let cleanText = contentLines.joined(separator: "\n")
+        // Se o card ainda estava subindo na tela e o OCR leu a linha de resumo ("15 min • 5.4 km") mas só 1 passo entre parênteses:
+        // Usa obrigatoriamente a linha de resumo para nunca subestimar a distância da corrida!
+        if let summary = summaryResult {
+            if let firstStep = parenSteps.first, summary.km > firstStep.km {
+                let tripKm = summary.km - firstStep.km
+                let tripMin = max(summary.min - firstStep.min, 1)
+                return (firstStep.km, tripKm, summary.km, firstStep.min, tripMin, summary.min)
+            }
+            return (0.0, summary.km, summary.km, 0, summary.min, summary.min)
+        }
+
+        // 3. Caso 99 Motorista ou layout sem linha de resumo da Uber
+        let cleanLines = lines.map(\.text).filter { line in
+            let lower = line.lowercased()
+            return !lower.contains("/km") && !lower.contains("est. de")
+        }
+        let cleanText = cleanLines.joined(separator: "\n")
 
         let distancesKm = extractGenericDistancesKm(from: cleanText)
         let durationsMin = extractGenericDurationsMin(from: cleanText)
@@ -283,14 +389,8 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
     }
 
     private func extractGenericDistancesKm(from text: String) -> [Double] {
-        // Captura tanto "1,8 km" quanto metros na 99 Motorista ("650 m" ou "650m")
-        let pattern = #"(?<!/)\b(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\b(?!\s*/)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return []
-        }
-
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, options: [], range: nsRange)
+        let matches = Self.genericDistanceRegex.matches(in: text, options: [], range: nsRange)
 
         var results: [Double] = []
         for match in matches {
@@ -303,7 +403,7 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             guard let value = Double(rawVal) else { continue }
 
             if unit == "m" {
-                // Na 99 ou Uber, distâncias em metros vão de 50m a 999m
+                // Distâncias de busca em metros na 99 ou Uber (50m a 999m)
                 if value >= 50 && value <= 999 {
                     results.append(value / 1000.0)
                 }
@@ -318,13 +418,8 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
     }
 
     private func extractGenericDurationsMin(from text: String) -> [Int] {
-        let pattern = #"(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\b"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return []
-        }
-
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, options: [], range: nsRange)
+        let matches = Self.genericDurationRegex.matches(in: text, options: [], range: nsRange)
 
         var durations: [Int] = []
         for match in matches {

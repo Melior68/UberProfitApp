@@ -1,8 +1,9 @@
 import Foundation
 import Network
+import UIKit
 
-/// Gerencia um socket UDP local (`127.0.0.1:9876`) para receber instantaneamente os pacotes JSON
-/// enviados pela `ScreenReaderExtension`, eliminando qualquer dependência de App Groups pagos.
+/// Gerencia o socket UDP local (`127.0.0.1:9876`) e monitora em tempo real (`UIScreen.main.isCaptured` + Heartbeat UDP)
+/// se a transmissão de tela do ReplayKit está ativa para atualizar imediatamente o botão na interface.
 @MainActor
 public final class UDPListenerManager: ObservableObject {
     @Published public private(set) var isListening: Bool = false
@@ -12,12 +13,16 @@ public final class UDPListenerManager: ObservableObject {
     public var onOfferReceived: ((RideOfferPayload) -> Void)?
 
     private var listener: NWListener?
+    private var screenCheckTimer: Timer?
     private let port: NWEndpoint.Port = 9876
     private let listenerQueue = DispatchQueue(label: "com.uberprofit.udplistener", qos: .userInteractive)
 
-    public init() {}
+    public init() {
+        setupScreenCaptureObserver()
+    }
 
     public func startListening() {
+        updateScreenCaptureStatus()
         guard listener == nil else { return }
 
         do {
@@ -59,6 +64,30 @@ public final class UDPListenerManager: ObservableObject {
         isListening = false
     }
 
+    private func setupScreenCaptureObserver() {
+        NotificationCenter.default.addObserver(
+            forName: UIScreen.capturedDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateScreenCaptureStatus()
+            }
+        }
+
+        screenCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateScreenCaptureStatus()
+            }
+        }
+    }
+
+    private func updateScreenCaptureStatus() {
+        let isCaptured = UIScreen.main.isCaptured
+        let recentUDPHeartbeat = lastPacketTime.map { Date().timeIntervalSince($0) < 4.5 } ?? false
+        broadcastActive = isCaptured || recentUDPHeartbeat
+    }
+
     nonisolated private func receiveLoop(on connection: NWConnection) {
         connection.receiveMessage { [weak self] data, _, _, error in
             if let data, !data.isEmpty {
@@ -87,11 +116,12 @@ public final class UDPListenerManager: ObservableObject {
            let status = statusDict["status"] {
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.lastPacketTime = Date()
-                if status == "BROADCAST_STARTED" || status == "BROADCAST_RESUMED" {
+                if status == "BROADCAST_FINISHED" {
+                    self.lastPacketTime = nil
+                    self.broadcastActive = UIScreen.main.isCaptured
+                } else {
+                    self.lastPacketTime = Date()
                     self.broadcastActive = true
-                } else if status == "BROADCAST_FINISHED" {
-                    self.broadcastActive = false
                 }
             }
         }

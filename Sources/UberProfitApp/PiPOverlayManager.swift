@@ -6,8 +6,7 @@ import CoreVideo
 import UIKit
 
 /// Gerencia a janela flutuante de Picture-in-Picture (`AVPictureInPictureController`)
-/// usando `AVSampleBufferDisplayLayer` para desenhar em tempo real o card colorido
-/// (Verde = Aceitar, Amarelo = Atenção, Vermelho = Recusar) sobre o aplicativo da Uber.
+/// com cache de `CVPixelBuffer` (zero uso de CPU/GPU quando a oferta não mudou).
 @MainActor
 public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrency AVPictureInPictureControllerDelegate, @preconcurrency AVPictureInPictureSampleBufferPlaybackDelegate {
 
@@ -19,6 +18,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     private var pipController: AVPictureInPictureController?
     private var refreshTimer: Timer?
     private var currentAnalysis: RideAnalysis?
+    private var cachedPixelBuffer: CVPixelBuffer?
     private var statusObservation: NSKeyValueObservation?
 
     private let canvasSize = CGSize(width: 640, height: 260)
@@ -33,7 +33,8 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     private func setupDisplayLayer() {
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
-        enqueueRenderedFrame(analysis: nil)
+        rebuildCachedPixelBuffer(for: nil)
+        enqueueCachedFrame()
     }
 
     private func setupPiPController() {
@@ -67,29 +68,43 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         if pipController.isPictureInPictureActive {
             pipController.stopPictureInPicture()
         } else {
-            enqueueRenderedFrame(analysis: currentAnalysis)
+            enqueueCachedFrame()
             pipController.startPictureInPicture()
         }
     }
 
+    public func stopPiPIfActive() {
+        guard let pipController, pipController.isPictureInPictureActive else { return }
+        pipController.stopPictureInPicture()
+    }
+
     public func updateCard(with analysis: RideAnalysis) {
+        guard currentAnalysis != analysis else { return }
         self.currentAnalysis = analysis
-        enqueueRenderedFrame(analysis: analysis)
+        rebuildCachedPixelBuffer(for: analysis)
+        enqueueCachedFrame()
     }
 
     private func startFrameFeedTimer() {
-        // Mantém o buffer da camada de vídeo alimentado a cada 1s para o iOS manter o PiP ativo
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // Alimenta a camada com o CVPixelBuffer já em cache a cada 1.5s (quase 0% de CPU)
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
-                self.enqueueRenderedFrame(analysis: self.currentAnalysis)
+                self?.enqueueCachedFrame()
             }
         }
     }
 
-    private func enqueueRenderedFrame(analysis: RideAnalysis?) {
+    private func rebuildCachedPixelBuffer(for analysis: RideAnalysis?) {
         let image = renderCardImage(analysis: analysis)
-        guard let sampleBuffer = createSampleBuffer(from: image) else { return }
+        cachedPixelBuffer = createPixelBuffer(from: image)
+    }
+
+    private func enqueueCachedFrame() {
+        if cachedPixelBuffer == nil {
+            rebuildCachedPixelBuffer(for: currentAnalysis)
+        }
+        guard let pixelBuffer = cachedPixelBuffer,
+              let sampleBuffer = createSampleBuffer(from: pixelBuffer) else { return }
 
         if displayLayer.status == .failed {
             displayLayer.flush()
@@ -104,7 +119,6 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
             let rect = CGRect(origin: .zero, size: canvasSize)
 
             guard let analysis else {
-                // Card inicial aguardando corridas
                 UIColor(red: 0.08, green: 0.10, blue: 0.14, alpha: 1.0).setFill()
                 context.fill(rect)
 
@@ -121,7 +135,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
                     alignment: .center
                 )
                 drawText(
-                    "Monitorando ofertas da Uber em tempo real...",
+                    "Monitorando Uber & 99 em tempo real...",
                     in: CGRect(x: 24, y: 135, width: canvasSize.width - 48, height: 50),
                     font: .systemFont(ofSize: 24, weight: .semibold),
                     color: .systemGray2,
@@ -131,23 +145,21 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
             }
 
             let bgColor: UIColor
-            let badgeText: String
+            let profitStr = String(format: "%.2f", analysis.netProfitBRL).replacingOccurrences(of: ".", with: ",")
+            let badgeText = "\(analysis.offer.appSource) • \(analysis.verdict.rawValue) • LUCRO R$ \(profitStr)"
+
             switch analysis.verdict {
             case .approved:
-                bgColor = UIColor(red: 0.06, green: 0.56, blue: 0.24, alpha: 1.0) // Verde Forte
-                badgeText = "ACEITAR  •  LUCRO R$ \(String(format: "%.2f", analysis.netProfitBRL).replacingOccurrences(of: ".", with: ","))"
+                bgColor = UIColor(red: 0.06, green: 0.56, blue: 0.24, alpha: 1.0)
             case .warning:
-                bgColor = UIColor(red: 0.78, green: 0.52, blue: 0.02, alpha: 1.0) // Amarelo / Âmbar
-                badgeText = "ATENÇÃO  •  LUCRO R$ \(String(format: "%.2f", analysis.netProfitBRL).replacingOccurrences(of: ".", with: ","))"
+                bgColor = UIColor(red: 0.78, green: 0.52, blue: 0.02, alpha: 1.0)
             case .rejected:
-                bgColor = UIColor(red: 0.72, green: 0.10, blue: 0.14, alpha: 1.0) // Vermelho Forte
-                badgeText = "RECUSAR  •  LUCRO R$ \(String(format: "%.2f", analysis.netProfitBRL).replacingOccurrences(of: ".", with: ","))"
+                bgColor = UIColor(red: 0.72, green: 0.10, blue: 0.14, alpha: 1.0)
             }
 
             bgColor.setFill()
             context.fill(rect)
 
-            // Cabeçalho com veredito e lucro líquido
             let headerRect = CGRect(x: 16, y: 14, width: canvasSize.width - 32, height: 48)
             let headerPath = UIBezierPath(roundedRect: headerRect, cornerRadius: 12)
             UIColor.black.withAlphaComponent(0.28).setFill()
@@ -155,19 +167,18 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
 
             drawText(
                 badgeText,
-                in: CGRect(x: 24, y: 20, width: canvasSize.width - 48, height: 38),
-                font: .systemFont(ofSize: 28, weight: .heavy),
+                in: CGRect(x: 20, y: 20, width: canvasSize.width - 40, height: 38),
+                font: .systemFont(ofSize: 26, weight: .heavy),
                 color: .white,
                 alignment: .center
             )
 
-            // Valores Gigantes: R$/km e R$/h
             let kmString = String(format: "R$ %.2f/km", analysis.grossPerKm).replacingOccurrences(of: ".", with: ",")
             let hourString = String(format: "R$ %.0f/h", analysis.grossPerHour)
 
             drawText(
                 kmString,
-                in: CGRect(x: 24, y: 78, width: 320, height: 85),
+                in: CGRect(x: 24, y: 78, width: 325, height: 85),
                 font: .systemFont(ofSize: 54, weight: .black),
                 color: .white,
                 alignment: .left
@@ -181,7 +192,6 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
                 alignment: .right
             )
 
-            // Rodapé com detalhes: Tarifa Bruta | KM Total | Tempo Total | Combustível
             let footerString = String(
                 format: "Tarifa R$ %.2f  •  %.1f km total  •  %d min  •  Comb. -R$ %.2f",
                 analysis.offer.fareBRL,
@@ -192,9 +202,9 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
 
             drawText(
                 footerString,
-                in: CGRect(x: 20, y: 192, width: canvasSize.width - 40, height: 45),
+                in: CGRect(x: 16, y: 192, width: canvasSize.width - 32, height: 45),
                 font: .systemFont(ofSize: 22, weight: .bold),
-                color: UIColor.white.withAlphaComponent(0.92),
+                color: UIColor.white.withAlphaComponent(0.95),
                 alignment: .center
             )
         }
@@ -213,8 +223,8 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         (text as NSString).draw(in: rect, withAttributes: attrs)
     }
 
-    // MARK: - Conversão UIImage -> CMSampleBuffer
-    private func createSampleBuffer(from image: UIImage) -> CMSampleBuffer? {
+    // MARK: - Conversão e Empacotamento de Vídeo com Cache
+    private func createPixelBuffer(from image: UIImage) -> CVPixelBuffer? {
         guard let cgImage = image.cgImage else { return nil }
         let width = cgImage.width
         let height = cgImage.height
@@ -253,7 +263,10 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         }
 
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return buffer
+    }
 
+    private func createSampleBuffer(from buffer: CVPixelBuffer) -> CMSampleBuffer? {
         var formatDescription: CMVideoFormatDescription?
         CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault,

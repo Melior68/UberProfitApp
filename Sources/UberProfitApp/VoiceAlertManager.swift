@@ -3,10 +3,11 @@ import AVFoundation
 import AudioToolbox
 
 /// Emite alertas sonoros (bipes de sistema) e síntese de voz imediata (`AVSpeechSynthesizer`)
-/// aplicando `.duckOthers` temporariamente para reduzir o volume da música/Spotify durante a fala.
+/// reduzindo o volume da música/Spotify (`duckOthers`) durante a fala e restaurando o KeepAlive em seguida.
 @MainActor
 public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrency AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
+    public var onSpeechFinished: (() -> Void)?
 
     public override init() {
         super.init()
@@ -18,14 +19,13 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
 
         activateDuckingSession()
 
-        // Toca bipe imediato antes da voz para reação instantânea
         switch analysis.verdict {
         case .approved:
-            AudioServicesPlaySystemSound(1057) // Som positivo curto
+            AudioServicesPlaySystemSound(1057)
         case .warning:
-            AudioServicesPlaySystemSound(1052) // Som de alerta médio
+            AudioServicesPlaySystemSound(1052)
         case .rejected:
-            AudioServicesPlaySystemSound(1053) // Som grave de recusa
+            AudioServicesPlaySystemSound(1053)
         }
 
         if synthesizer.isSpeaking {
@@ -35,7 +35,7 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
         let speechText = buildSpeechPhrase(for: analysis)
         let utterance = AVSpeechUtterance(string: speechText)
         utterance.voice = AVSpeechSynthesisVoice(language: "pt-BR")
-        utterance.rate = 0.54 // Ritmo ágil e claro para leitura rápida no trânsito
+        utterance.rate = 0.54
         utterance.pitchMultiplier = analysis.verdict == .approved ? 1.08 : 0.95
         utterance.volume = 1.0
 
@@ -61,13 +61,13 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
         case .warning:
             return "Atenção! \(kmFormatted). \(horaInt) por hora."
         case .rejected:
-            return "Recusar! Apenas \(kmFormatted)."
+            return "Recusar! \(kmFormatted)."
         }
     }
 
     private func activateDuckingSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .voicePrompt, options: [.mixWithOthers, .duckOthers])
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
         try? session.setActive(true)
     }
 
@@ -75,6 +75,7 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true)
+        onSpeechFinished?()
     }
 
     public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

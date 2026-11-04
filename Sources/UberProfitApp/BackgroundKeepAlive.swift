@@ -2,7 +2,8 @@ import Foundation
 import AVFoundation
 
 /// Mantém o aplicativo principal vivo 100% do tempo em segundo plano usando uma sessão de áudio
-/// `.playback` com `.mixWithOthers`, reproduzindo um buffer PCM inaudível em loop contínuo.
+/// `.playback` com `.mixWithOthers`, reproduzindo um buffer PCM inaudível em loop contínuo e
+/// auto-recuperando o `AVAudioEngine` após qualquer síntese de voz ou interrupção do sistema.
 @MainActor
 public final class BackgroundKeepAlive: ObservableObject {
     @Published public private(set) var isRunning: Bool = false
@@ -10,14 +11,18 @@ public final class BackgroundKeepAlive: ObservableObject {
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var silenceBuffer: AVAudioPCMBuffer?
+    private var watchdogTimer: Timer?
 
     public init() {
         setupNotifications()
     }
 
     public func start() {
-        guard !isRunning else { return }
+        ensureEnginePlaying()
+        startWatchdog()
+    }
 
+    public func ensureEnginePlaying() {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -34,24 +39,37 @@ public final class BackgroundKeepAlive: ObservableObject {
                 playerNode.play()
             }
 
-            isRunning = true
+            isRunning = audioEngine.isRunning && playerNode.isPlaying
         } catch {
             isRunning = false
         }
     }
 
     public func stop() {
-        guard isRunning else { return }
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
         playerNode.stop()
         audioEngine.stop()
         isRunning = false
+    }
+
+    private func startWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if !self.audioEngine.isRunning || !self.playerNode.isPlaying {
+                    self.ensureEnginePlaying()
+                }
+            }
+        }
     }
 
     private func configureEngineIfNeeded() {
         guard silenceBuffer == nil else { return }
 
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100.0, channels: 1)!
-        let frameCount: AVAudioFrameCount = 44100 // 1 segundo de áudio silencioso
+        let frameCount: AVAudioFrameCount = 44100
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
         buffer.frameLength = frameCount
 
@@ -74,9 +92,7 @@ public final class BackgroundKeepAlive: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isRunning else { return }
-                self.isRunning = false
-                self.start()
+                self?.ensureEnginePlaying()
             }
         }
     }
