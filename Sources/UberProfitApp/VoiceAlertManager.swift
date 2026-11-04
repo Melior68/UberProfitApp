@@ -3,7 +3,7 @@ import AVFoundation
 import AudioToolbox
 
 /// Emite alertas sonoros (bipes de sistema) e síntese de voz imediata (`AVSpeechSynthesizer`)
-/// reduzindo o volume da música/Spotify (`duckOthers`) durante a fala e restaurando o KeepAlive em seguida.
+/// totalmente personalizável (Completa, Curta ou Apenas Boas/Atenção, além da velocidade da fala).
 @MainActor
 public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrency AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
@@ -14,11 +14,10 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
         synthesizer.delegate = self
     }
 
-    public func announce(analysis: RideAnalysis, enabled: Bool) {
-        guard enabled else { return }
+    public func announce(analysis: RideAnalysis, settings: DriverSettings) {
+        guard settings.voiceAlertsEnabled else { return }
 
-        activateDuckingSession()
-
+        // Toca bipe imediato antes da voz
         switch analysis.verdict {
         case .approved:
             AudioServicesPlaySystemSound(1057)
@@ -28,24 +27,34 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
             AudioServicesPlaySystemSound(1053)
         }
 
+        // Se o motorista escolheu "Falar Só Boas/Atenção", nas recusadas toca apenas o bipe curto acima e não fala voz
+        if settings.voiceSpeechStyle == .approvedAndWarningOnly && analysis.verdict == .rejected {
+            return
+        }
+
+        activateDuckingSession()
+
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
 
-        let speechText = buildSpeechPhrase(for: analysis)
+        let speechText = buildSpeechPhrase(for: analysis, settings: settings)
         let utterance = AVSpeechUtterance(string: speechText)
         utterance.voice = AVSpeechSynthesisVoice(language: "pt-BR")
-        utterance.rate = 0.54
+        utterance.rate = Float(settings.voiceSpeechRate)
         utterance.pitchMultiplier = analysis.verdict == .approved ? 1.08 : 0.95
         utterance.volume = 1.0
 
         synthesizer.speak(utterance)
     }
 
-    private func buildSpeechPhrase(for analysis: RideAnalysis) -> String {
-        let reais = Int(analysis.grossPerKm)
-        let centavos = Int(((analysis.grossPerKm - Double(reais)) * 100).rounded())
-        let horaInt = Int(analysis.grossPerHour.rounded())
+    private func buildSpeechPhrase(for analysis: RideAnalysis, settings: DriverSettings) -> String {
+        let kmValue = (settings.primaryMetricDisplay == .net) ? analysis.netPerKm : analysis.grossPerKm
+        let hourValue = (settings.primaryMetricDisplay == .net) ? analysis.netPerHour : analysis.grossPerHour
+
+        let reais = Int(max(kmValue, 0))
+        let centavos = Int(((max(kmValue, 0) - Double(reais)) * 100).rounded())
+        let horaInt = Int(max(hourValue, 0).rounded())
         let lucroInt = Int(analysis.netProfitBRL.rounded())
 
         let kmFormatted: String
@@ -53,6 +62,17 @@ public final class VoiceAlertManager: NSObject, ObservableObject, @preconcurrenc
             kmFormatted = "\(reais) e \(centavos) por quilômetro"
         } else {
             kmFormatted = "\(reais) reais por quilômetro"
+        }
+
+        if settings.voiceSpeechStyle == .compact {
+            switch analysis.verdict {
+            case .approved:
+                return "Boa! \(kmFormatted). Lucro \(lucroInt)."
+            case .warning:
+                return "Atenção! \(kmFormatted)."
+            case .rejected:
+                return "Recusar! \(kmFormatted)."
+            }
         }
 
         switch analysis.verdict {

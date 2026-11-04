@@ -6,7 +6,7 @@ import CoreVideo
 import UIKit
 
 /// Gerencia a janela flutuante de Picture-in-Picture (`AVPictureInPictureController`)
-/// com cache de `CVPixelBuffer` (zero uso de CPU/GPU quando a oferta não mudou).
+/// com cache de `CVPixelBuffer` e suporte a exibição de métrica Bruta ou Líquida em destaque.
 @MainActor
 public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrency AVPictureInPictureControllerDelegate, @preconcurrency AVPictureInPictureSampleBufferPlaybackDelegate {
 
@@ -18,6 +18,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     private var pipController: AVPictureInPictureController?
     private var refreshTimer: Timer?
     private var currentAnalysis: RideAnalysis?
+    private var currentDisplayMode: PrimaryMetricDisplay = .gross
     private var cachedPixelBuffer: CVPixelBuffer?
     private var statusObservation: NSKeyValueObservation?
 
@@ -33,7 +34,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     private func setupDisplayLayer() {
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
-        rebuildCachedPixelBuffer(for: nil)
+        rebuildCachedPixelBuffer(for: nil, displayMode: .gross)
         enqueueCachedFrame()
     }
 
@@ -85,15 +86,15 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         pipController.stopPictureInPicture()
     }
 
-    public func updateCard(with analysis: RideAnalysis) {
-        guard currentAnalysis != analysis else { return }
+    public func updateCard(with analysis: RideAnalysis, displayMode: PrimaryMetricDisplay = .gross) {
+        guard currentAnalysis != analysis || currentDisplayMode != displayMode else { return }
         self.currentAnalysis = analysis
-        rebuildCachedPixelBuffer(for: analysis)
+        self.currentDisplayMode = displayMode
+        rebuildCachedPixelBuffer(for: analysis, displayMode: displayMode)
         enqueueCachedFrame()
     }
 
     private func startFrameFeedTimer() {
-        // Alimenta a camada com o CVPixelBuffer já em cache a cada 1.5s (quase 0% de CPU)
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.enqueueCachedFrame()
@@ -101,14 +102,14 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         }
     }
 
-    private func rebuildCachedPixelBuffer(for analysis: RideAnalysis?) {
-        let image = renderCardImage(analysis: analysis)
+    private func rebuildCachedPixelBuffer(for analysis: RideAnalysis?, displayMode: PrimaryMetricDisplay) {
+        let image = renderCardImage(analysis: analysis, displayMode: displayMode)
         cachedPixelBuffer = createPixelBuffer(from: image)
     }
 
     private func enqueueCachedFrame() {
         if cachedPixelBuffer == nil {
-            rebuildCachedPixelBuffer(for: currentAnalysis)
+            rebuildCachedPixelBuffer(for: currentAnalysis, displayMode: currentDisplayMode)
         }
         guard let pixelBuffer = cachedPixelBuffer,
               let sampleBuffer = createSampleBuffer(from: pixelBuffer) else { return }
@@ -120,7 +121,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     }
 
     // MARK: - Renderização Gráfica do Card (Verde / Amarelo / Vermelho)
-    private func renderCardImage(analysis: RideAnalysis?) -> UIImage {
+    private func renderCardImage(analysis: RideAnalysis?, displayMode: PrimaryMetricDisplay) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: canvasSize)
         return renderer.image { context in
             let rect = CGRect(origin: .zero, size: canvasSize)
@@ -135,14 +136,14 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
                 borderPath.stroke()
 
                 drawText(
-                    "UBER PROFIT ATIVO",
+                    "UBER & 99 PROFIT ATIVO",
                     in: CGRect(x: 24, y: 55, width: canvasSize.width - 48, height: 60),
-                    font: .systemFont(ofSize: 42, weight: .black),
+                    font: .systemFont(ofSize: 40, weight: .black),
                     color: .white,
                     alignment: .center
                 )
                 drawText(
-                    "Monitorando Uber & 99 em tempo real...",
+                    "Monitorando ofertas em tempo real...",
                     in: CGRect(x: 24, y: 135, width: canvasSize.width - 48, height: 50),
                     font: .systemFont(ofSize: 24, weight: .semibold),
                     color: .systemGray2,
@@ -180,8 +181,11 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
                 alignment: .center
             )
 
-            let kmString = String(format: "R$ %.2f/km", analysis.grossPerKm).replacingOccurrences(of: ".", with: ",")
-            let hourString = String(format: "R$ %.0f/h", analysis.grossPerHour)
+            let shownKm = (displayMode == .net) ? analysis.netPerKm : analysis.grossPerKm
+            let shownHour = (displayMode == .net) ? analysis.netPerHour : analysis.grossPerHour
+
+            let kmString = String(format: "R$ %.2f/km", shownKm).replacingOccurrences(of: ".", with: ",")
+            let hourString = String(format: "R$ %.0f/h", shownHour)
 
             drawText(
                 kmString,

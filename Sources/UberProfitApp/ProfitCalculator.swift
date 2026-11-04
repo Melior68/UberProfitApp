@@ -53,6 +53,45 @@ public enum VisualAlertMode: String, CaseIterable, Sendable {
     }
 }
 
+/// Estilo de fala do alerta de voz
+public enum VoiceSpeechStyle: String, CaseIterable, Sendable {
+    case full = "FULL"
+    case compact = "COMPACT"
+    case approvedAndWarningOnly = "GOOD_ONLY"
+
+    public var title: String {
+        switch self {
+        case .full: return "Completa (Todas)"
+        case .compact: return "Curta e Rápida"
+        case .approvedAndWarningOnly: return "Falar Só Boas/Atenção"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .full:
+            return "Fala R$/km, R$/hora e Lucro Líquido em todas as corridas."
+        case .compact:
+            return "Fala apenas R$/km e Lucro Líquido de forma bem rápida."
+        case .approvedAndWarningOnly:
+            return "Fala voz completa nas Boas/Atenção; nas Recusadas dá apenas 1 bipe discreto."
+        }
+    }
+}
+
+/// Qual valor destacar em fonte gigante no Card / Banner
+public enum PrimaryMetricDisplay: String, CaseIterable, Sendable {
+    case gross = "GROSS"
+    case net = "NET"
+
+    public var title: String {
+        switch self {
+        case .gross: return "Valor Bruto (Uber/99)"
+        case .net: return "Valor Líquido (Livre)"
+        }
+    }
+}
+
 /// Classificação de decisão da corrida
 public enum RideVerdict: String, Sendable {
     case approved = "ACEITAR"
@@ -89,6 +128,9 @@ public struct DriverSettings: Sendable, Equatable {
     public var fuelPriceBRLPerLiter: Double
     public var voiceAlertsEnabled: Bool
     public var evaluateUsingNetProfit: Bool
+    public var voiceSpeechStyle: VoiceSpeechStyle
+    public var voiceSpeechRate: Double
+    public var primaryMetricDisplay: PrimaryMetricDisplay
 
     public init(
         targetBRLPerKm: Double = 2.00,
@@ -96,7 +138,10 @@ public struct DriverSettings: Sendable, Equatable {
         carConsumptionKmPerLiter: Double = 10.0,
         fuelPriceBRLPerLiter: Double = 6.35,
         voiceAlertsEnabled: Bool = true,
-        evaluateUsingNetProfit: Bool = false
+        evaluateUsingNetProfit: Bool = false,
+        voiceSpeechStyle: VoiceSpeechStyle = .full,
+        voiceSpeechRate: Double = 0.54,
+        primaryMetricDisplay: PrimaryMetricDisplay = .gross
     ) {
         self.targetBRLPerKm = targetBRLPerKm
         self.targetBRLPerHour = targetBRLPerHour
@@ -104,6 +149,9 @@ public struct DriverSettings: Sendable, Equatable {
         self.fuelPriceBRLPerLiter = fuelPriceBRLPerLiter
         self.voiceAlertsEnabled = voiceAlertsEnabled
         self.evaluateUsingNetProfit = evaluateUsingNetProfit
+        self.voiceSpeechStyle = voiceSpeechStyle
+        self.voiceSpeechRate = voiceSpeechRate
+        self.primaryMetricDisplay = primaryMetricDisplay
     }
 }
 

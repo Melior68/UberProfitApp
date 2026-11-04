@@ -2,7 +2,7 @@ import Foundation
 import UserNotifications
 
 /// Dispara notificações locais imediatas (Banner no topo da tela do iPhone) com som e resumo completo
-/// da corrida assim que o card da Uber ou 99 aparece, funcionando mesmo com o PiP desligado.
+/// da corrida assim que o card da Uber ou 99 aparece, respeitando a preferência de métrica (Bruto vs Líquido).
 @MainActor
 public final class NotificationAlertManager: NSObject, ObservableObject, @preconcurrency UNUserNotificationCenterDelegate {
     @Published public private(set) var isAuthorized: Bool = false
@@ -23,22 +23,24 @@ public final class NotificationAlertManager: NSObject, ObservableObject, @precon
         }
     }
 
-    public func sendRideBanner(analysis: RideAnalysis) {
+    public func sendRideBanner(analysis: RideAnalysis, displayMode: PrimaryMetricDisplay = .gross) {
         let center = UNUserNotificationCenter.current()
-        // Remove banner anterior para não empilhar notificações antigas
         center.removeAllDeliveredNotifications()
 
         let content = UNMutableNotificationContent()
-        let kmStr = String(format: "R$ %.2f/km", analysis.grossPerKm).replacingOccurrences(of: ".", with: ",")
-        let hourStr = String(format: "R$ %.0f/h", analysis.grossPerHour)
+        let shownKm = (displayMode == .net) ? analysis.netPerKm : analysis.grossPerKm
+        let shownHour = (displayMode == .net) ? analysis.netPerHour : analysis.grossPerHour
+
+        let kmStr = String(format: "R$ %.2f/km", shownKm).replacingOccurrences(of: ".", with: ",")
+        let hourStr = String(format: "R$ %.0f/h", shownHour)
         let netStr = String(format: "R$ %.2f", analysis.netProfitBRL).replacingOccurrences(of: ".", with: ",")
         let fareStr = String(format: "R$ %.2f", analysis.offer.fareBRL).replacingOccurrences(of: ".", with: ",")
         let distStr = String(format: "%.1f km", analysis.offer.totalDistanceKm).replacingOccurrences(of: ".", with: ",")
         let fuelStr = String(format: "-R$ %.2f", analysis.fuelCostBRL).replacingOccurrences(of: ".", with: ",")
 
         content.title = "\(analysis.verdict.emoji) \(analysis.verdict.rawValue) (\(analysis.offer.appSource)) • \(kmStr) • \(hourStr)"
-        content.subtitle = "Lucro Líquido: \(netStr) (Comb: \(fuelStr))"
-        content.body = "Tarifa: \(fareStr)  |  Total: \(distStr) em \(analysis.offer.totalMinutes) min"
+        content.subtitle = "Lucro Livre: \(netStr) (Gasolina: \(fuelStr))"
+        content.body = "Tarifa: \(fareStr)  •  Total: \(distStr) (\(analysis.offer.totalMinutes) min)"
         content.sound = .default
         if #available(iOS 15.0, *) {
             content.interruptionLevel = .timeSensitive
@@ -47,13 +49,12 @@ public final class NotificationAlertManager: NSObject, ObservableObject, @precon
         let request = UNNotificationRequest(
             identifier: "UBER_PROFIT_LIVE_OFFER",
             content: content,
-            trigger: nil // Entrega imediata (milissegundos)
+            trigger: nil
         )
 
         center.add(request, withCompletionHandler: nil)
     }
 
-    // Garante que o Banner apareça no topo mesmo se o próprio UberProfit estiver aberto na tela
     public func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
