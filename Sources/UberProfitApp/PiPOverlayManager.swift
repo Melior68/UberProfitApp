@@ -27,8 +27,10 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     public override init() {
         super.init()
         setupDisplayLayer()
-        setupPiPController()
         startFrameFeedTimer()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.setupPiPController()
+        }
     }
 
     private func setupDisplayLayer() {
@@ -38,9 +40,10 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         enqueueCachedFrame()
     }
 
+    private var isAutoStartPreferred: Bool = false
+
     private func setupPiPController() {
-        guard AVPictureInPictureController.isPictureInPictureSupported() else {
-            isPiPPossible = false
+        guard pipController == nil, AVPictureInPictureController.isPictureInPictureSupported() else {
             return
         }
 
@@ -51,7 +54,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
 
         let controller = AVPictureInPictureController(contentSource: contentSource)
         controller.delegate = self
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = isAutoStartPreferred
         controller.requiresLinearPlayback = true
 
         statusObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] ctrl, _ in
@@ -65,6 +68,9 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     }
 
     public func togglePiP() {
+        if pipController == nil {
+            setupPiPController()
+        }
         guard let pipController else { return }
         if pipController.isPictureInPictureActive {
             pipController.stopPictureInPicture()
@@ -75,6 +81,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
     }
 
     public func setAutoStartEnabled(_ enabled: Bool) {
+        isAutoStartPreferred = enabled
         pipController?.canStartPictureInPictureAutomaticallyFromInline = enabled
         if !enabled {
             stopPiPIfActive()
