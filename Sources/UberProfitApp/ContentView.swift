@@ -274,17 +274,21 @@ public struct ContentView: View {
                     .foregroundStyle(udpListener.broadcastActive ? .green : .secondary)
             }
 
-            if visualAlertMode == .notificationOnly {
-                nativePreviewCard
-            } else {
+            ZStack {
                 PiPLayerContainerView(displayLayer: pipManager.displayLayer)
                     .frame(height: 155)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2)
-                    )
+                    .opacity(visualAlertMode == .notificationOnly ? 0.01 : 1.0)
+
+                if visualAlertMode == .notificationOnly {
+                    nativePreviewCard
+                }
             }
+            .frame(height: 155)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2)
+            )
         }
     }
 
