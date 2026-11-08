@@ -13,6 +13,25 @@ public struct RideOfferPayload: Codable, Sendable, Equatable {
     public let rawRecognizedText: String
     public let timestamp: TimeInterval
 
+    enum CodingKeys: String, CodingKey {
+        case appSource, fareBRL, pickupDistanceKm, tripDistanceKm, totalDistanceKm
+        case pickupMinutes, tripMinutes, totalMinutes, rawRecognizedText, timestamp
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.appSource = try container.decodeIfPresent(String.self, forKey: .appSource) ?? "UBER"
+        self.fareBRL = try container.decode(Double.self, forKey: .fareBRL)
+        self.pickupDistanceKm = try container.decode(Double.self, forKey: .pickupDistanceKm)
+        self.tripDistanceKm = try container.decode(Double.self, forKey: .tripDistanceKm)
+        self.totalDistanceKm = try container.decode(Double.self, forKey: .totalDistanceKm)
+        self.pickupMinutes = try container.decode(Int.self, forKey: .pickupMinutes)
+        self.tripMinutes = try container.decode(Int.self, forKey: .tripMinutes)
+        self.totalMinutes = try container.decode(Int.self, forKey: .totalMinutes)
+        self.rawRecognizedText = try container.decode(String.self, forKey: .rawRecognizedText)
+        self.timestamp = try container.decode(TimeInterval.self, forKey: .timestamp)
+    }
+
     public init(
         appSource: String = "UBER",
         fareBRL: Double,

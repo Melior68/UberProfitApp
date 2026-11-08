@@ -6,7 +6,7 @@ import UIKit
 
 /// Payload compartilhado enviado via UDP local para o App Principal
 public struct RideOfferPayload: Codable, Sendable {
-    public let appSource: String // "UBER" ou "99"
+    public let appSource: String?
     public let fareBRL: Double
     public let pickupDistanceKm: Double
     public let tripDistanceKm: Double
@@ -28,9 +28,9 @@ private struct RecognizedLine {
 public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
 
     // MARK: - Configurações de Performance e Limites
-    private let throttleInterval: TimeInterval = 0.40 // 1 frame a cada 0.4s
-    private let heartbeatInterval: TimeInterval = 2.0 // Pulso a cada 2.0s para manter status "Leitor Ativo" na UI
-    private let debounceInterval: TimeInterval = 12.0 // Ignora a mesma oferta por 12s
+    private let throttleInterval: TimeInterval = 0.35 // 1 frame a cada 0.35s
+    private let heartbeatInterval: TimeInterval = 2.0
+    private let debounceInterval: TimeInterval = 10.0
     private let udpHost: NWEndpoint.Host = "127.0.0.1"
     private let udpPort: NWEndpoint.Port = 9876
 
@@ -42,12 +42,12 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
     private var udpConnection: NWConnection?
     private let processingQueue = DispatchQueue(label: "com.uberprofit.screenreader.vision", qos: .userInteractive)
 
-    // MARK: - Regex Pré-Compiladas (Zero Alocação por Frame)
+    // MARK: - Regex Pré-Compiladas (Suporta Uber e 99 Motorista com ou sem espaço após R$)
     private static let priceRegex = try! NSRegularExpression(
-        pattern: #"(?<!\+)\b(?:R\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)"#,
+        pattern: #"(?<!\+)(?:R\s*\$|RS|\$)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)"#,
         options: [.caseInsensitive]
     )
-    private static let uberStepRegex = try! NSRegularExpression(
+    private static let uberOr99StepRegex = try! NSRegularExpression(
         pattern: #"(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*\(\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)"#,
         options: [.caseInsensitive]
     )
@@ -90,7 +90,6 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
         let now = CACurrentMediaTime()
 
-        // Envia Heartbeat periódico para o App Principal saber que a extensão está viva e capturando
         if (now - lastHeartbeatTime) >= heartbeatInterval {
             lastHeartbeatTime = now
             sendPingStatus(status: "BROADCAST_ACTIVE")
@@ -110,20 +109,19 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
         let orientationRaw = CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? UInt32
         let cgOrientation = CGImagePropertyOrientation(rawValue: orientationRaw ?? CGImagePropertyOrientation.up.rawValue) ?? .up
 
-        // Processamento síncrono dentro de autoreleasepool rigoroso para nunca ultrapassar o limite de 50 MB de RAM
         autoreleasepool {
             defer { isProcessingFrame = false }
             performFastOCR(on: pixelBuffer, orientation: cgOrientation, timestamp: Date().timeIntervalSince1970)
         }
     }
 
-    // MARK: - OCR de Baixa Latência com Filtro Anti-AutoLeitura
+    // MARK: - OCR de Baixa Latência
     private func performFastOCR(on pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, timestamp: TimeInterval) {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0.011
-        // 70% inferiores da tela para cobrir integralmente os cards da Uber e da 99 Motorista
+        request.minimumTextHeight = 0.010
+        // 70% inferiores da tela onde surgem os cards da Uber e da 99 Motorista
         request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.70)
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
@@ -137,7 +135,6 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             return
         }
 
-        // Ordena de cima para baixo (maior midY no Vision = mais alto na tela)
         let sortedObservations = observations.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
 
         var recognizedLines: [RecognizedLine] = []
@@ -148,7 +145,6 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             let clean = candidate.string.replacingOccurrences(of: "\u{00A0}", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty else { continue }
 
-            // Filtra linhas que pertençam à nossa própria janela PiP ou Notificação caso estejam na parte de baixo
             if isSelfOverlayLine(clean) {
                 continue
             }
@@ -180,51 +176,40 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
     private func isSelfOverlayLine(_ line: String) -> Bool {
         let upper = line.uppercased()
-        return upper.contains("UBER PROFIT") ||
+        return upper.contains("PROFIT ATIVO") ||
                upper.contains("UBERPROFIT") ||
                upper.contains("LUCRO R$") ||
+               upper.contains("LUCRO LIVRE:") ||
                upper.contains("COMB. -R$") ||
+               upper.contains("GASOLINA: -R$") ||
                upper.contains("KM TOTAL") ||
-               upper.contains("MONITORANDO OFERTAS")
+               upper.contains("MONITORANDO OFERTAS") ||
+               upper.contains("SIMULAR CORRIDA")
     }
 
-    // MARK: - Parser Inteligente (Uber Driver + 99 Motorista)
+    // MARK: - Parser Universal para Uber Driver e 99 Motorista
     private func parseRideCard(from lines: [RecognizedLine], timestamp: TimeInterval) -> RideOfferPayload? {
         let fullText = lines.map(\.text).joined(separator: "\n")
         let lowerFull = fullText.lowercased()
 
-        // Confirma que existe um botão/indicador de card de oferta real na tela para evitar ler tela de ganhos passados
-        let hasOfferContext = lowerFull.contains("aceitar") ||
-                              lowerFull.contains("tenho interesse") ||
-                              lowerFull.contains("exclusivo") ||
-                              lowerFull.contains("uberx") ||
-                              lowerFull.contains("priority") ||
-                              lowerFull.contains("comfort") ||
-                              lowerFull.contains("black") ||
-                              lowerFull.contains("flash") ||
-                              lowerFull.contains("moto") ||
-                              lowerFull.contains("99pop") ||
-                              lowerFull.contains("99plus") ||
-                              lowerFull.contains("99") ||
-                              lowerFull.contains("est. de") ||
-                              lowerFull.contains("min (")
+        // Identifica automaticamente se o card é da 99 Motorista ou da Uber Driver
+        let is99Card = lowerFull.contains("99") ||
+                       lowerFull.contains("pgto") ||
+                       lowerFull.contains("tarifa base") ||
+                       lowerFull.contains("cpf verif") ||
+                       lowerFull.contains("perfil premium") ||
+                       lowerFull.contains("corridas") ||
+                       lowerFull.contains("negocia") ||
+                       lowerFull.contains("poupa")
 
-        guard hasOfferContext else { return nil }
+        let appSource = is99Card ? "99" : "UBER"
 
-        // Detecta origem (Uber vs 99)
-        let appSource: String
-        if lowerFull.contains("99") || lowerFull.contains("negocia") || lowerFull.contains("poupa") {
-            appSource = "99"
-        } else {
-            appSource = "UBER"
-        }
-
-        // 1. Extrai Tarifa Principal priorizando a maior altura visual da fonte (BoundingBox Height)
+        // 1. Extrai a Tarifa Principal em Reais (ignorando adicionais "+R$ 3,50 incluído" e "R$3,34 Tarifa base dinâmica incl.")
         guard let fare = extractMainFareBRL(from: lines), fare >= 4.0, fare <= 950.0 else {
             return nil
         }
 
-        // 2. Extrai Distâncias e Tempos com proteção contra soma duplicada da linha de resumo da Uber
+        // 2. Extrai Distâncias e Tempos somando busca + viagem sem duplicar linha de resumo
         let (pickupKm, tripKm, totalKm, pickupMin, tripMin, totalMin) = extractDistancesAndDurations(from: lines, fullText: fullText)
 
         guard totalKm >= 0.2, totalMin >= 1 else {
@@ -250,8 +235,18 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
         for line in lines {
             let lower = line.text.lowercased()
-            // Ignora linhas de bônus adicional ("+R$ 2,12 incluída") ou estimativa por km ("Est. de R$1,91/km")
-            if lower.contains("incluíd") || lower.contains("incluid") || lower.contains("est. de") || lower.contains("/km") || lower.contains("/h") {
+            // Ignora linhas de bônus/adicional da Uber e da 99 ("+R$ 3,50 incluído", "R$3,34 Tarifa base dinâmica incl.", "Est. de R$1,91/km")
+            if lower.contains("incluíd") ||
+               lower.contains("incluid") ||
+               lower.contains("incl.") ||
+               lower.contains("tarifa base") ||
+               lower.contains("dinâmica") ||
+               lower.contains("dinamica") ||
+               lower.contains("prioritária") ||
+               lower.contains("prioritaria") ||
+               lower.contains("est. de") ||
+               lower.contains("/km") ||
+               lower.contains("/h") {
                 continue
             }
 
@@ -270,11 +265,10 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
         guard !candidates.isEmpty else { return nil }
 
-        // O preço principal da corrida na Uber e na 99 é sempre desenhado com a maior fonte do card.
-        // Se houver candidatos com pelo menos 75% da altura da maior fonte encontrada, pega o maior valor entre eles.
+        // Prioriza a maior fonte do card, mas também garante pegar o maior valor principal caso o OCR divida a caixa
         let maxHeight = candidates.map(\.height).max() ?? 0
-        let prominentCandidates = candidates.filter { $0.height >= maxHeight * 0.75 }
-        return prominentCandidates.map(\.value).max() ?? candidates.map(\.value).max()
+        let prominent = candidates.filter { $0.height >= maxHeight * 0.65 }
+        return prominent.map(\.value).max() ?? candidates.map(\.value).max()
     }
 
     private func extractDistancesAndDurations(from lines: [RecognizedLine], fullText: String) -> (Double, Double, Double, Int, Int, Int) {
@@ -301,9 +295,11 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             }
         }
 
-        // 2. Verifica os passos detalhados entre parênteses da Uber: ex: "3 min (0.7 km)" e "12 minutos (4.7 km)"
+        // 2. Verifica os passos detalhados entre parênteses (usado tanto na Uber quanto na 99!):
+        // Ex Uber: "3 min (0.8 km)" e "12 minutos (5.2 km)"
+        // Ex 99:   "8 min (3,2 km)" e "13 min (7,2 km)"
         var parenSteps: [(min: Int, km: Double)] = []
-        let stepMatches = Self.uberStepRegex.matches(in: fullText, options: [], range: nsFullRange)
+        let stepMatches = Self.uberOr99StepRegex.matches(in: fullText, options: [], range: nsFullRange)
         for match in stepMatches {
             var hours = 0
             if let hRange = Range(match.range(at: 1), in: fullText), let h = Int(fullText[hRange]) {
@@ -324,7 +320,6 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             }
         }
 
-        // Se encontrou os 2 passos detalhados da Uber ("3 min (0.7 km)" + "12 minutos (4.7 km)")
         if parenSteps.count >= 2 {
             let pKm = parenSteps[0].km
             let tKm = parenSteps[1].km
@@ -333,15 +328,12 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             let sumKm = pKm + tKm
             let sumMin = pMin + tMin
 
-            // Validação cruzada com a linha de resumo caso ambos existam
             if let summary = summaryResult, summary.km > sumKm {
                 return (pKm, summary.km - pKm, summary.km, pMin, max(summary.min - pMin, 1), summary.min)
             }
             return (pKm, tKm, sumKm, pMin, tMin, sumMin)
         }
 
-        // Se o card ainda estava subindo na tela e o OCR leu a linha de resumo ("15 min • 5.4 km") mas só 1 passo entre parênteses:
-        // Usa obrigatoriamente a linha de resumo para nunca subestimar a distância da corrida!
         if let summary = summaryResult {
             if let firstStep = parenSteps.first, summary.km > firstStep.km {
                 let tripKm = summary.km - firstStep.km
@@ -351,7 +343,7 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             return (0.0, summary.km, summary.km, 0, summary.min, summary.min)
         }
 
-        // 3. Caso 99 Motorista ou layout sem linha de resumo da Uber
+        // 3. Fallback genérico para quando o OCR não leu os parênteses
         let cleanLines = lines.map(\.text).filter { line in
             let lower = line.lowercased()
             return !lower.contains("/km") && !lower.contains("est. de")
@@ -403,7 +395,6 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
             guard let value = Double(rawVal) else { continue }
 
             if unit == "m" {
-                // Distâncias de busca em metros na 99 ou Uber (50m a 999m)
                 if value >= 50 && value <= 999 {
                     results.append(value / 1000.0)
                 }
