@@ -117,12 +117,19 @@ object RideScreenParser {
         return upper.contains("PROFIT ATIVO") ||
             upper.contains("UBERPROFIT") ||
             upper.contains("LUCRO R$") ||
-            upper.contains("LUCRO LIVRE:") ||
+            upper.contains("LUCRO LIVRE") ||
             upper.contains("COMB. -R$") ||
             upper.contains("GASOLINA: -R$") ||
             upper.contains("KM TOTAL") ||
             upper.contains("MONITORANDO OFERTAS") ||
-            upper.contains("ACEITEI CORRIDA")
+            upper.contains("ACEITEI CORRIDA") ||
+            upper.contains("ACEITEI") ||
+            upper.contains("TARIFA R$") ||
+            upper.contains("RECUSAR") ||
+            upper.contains("ATENÇÃO") ||
+            upper.contains("ATENCAO") ||
+            upper.contains("R$ /KM") ||
+            upper.contains("R$ /H")
     }
 
     fun isAcceptedTripScreen(allScreenText: String): Boolean {
@@ -182,6 +189,7 @@ object RideScreenParser {
         val isCollapsed99Drawer = (lowerFull.contains("solicitações") ||
             lowerFull.contains("solicitacoes") ||
             lowerFull.contains("buscando")) &&
+            !lowerFull.contains("escolher") &&
             !lowerFull.contains("pgto") &&
             !lowerFull.contains("toque abaixo") &&
             !lowerFull.contains("/km")

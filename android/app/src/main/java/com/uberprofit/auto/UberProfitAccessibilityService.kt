@@ -257,13 +257,21 @@ class UberProfitAccessibilityService : AccessibilityService() {
                                 }
 
                                 if (ocrLines.isNotEmpty()) {
-                                    val sortedOcr = ocrLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
+                                    // FILTRA: Remove textos que estejam no topo onde fica a nossa Pílula Flutuante (topY < 240)
+                                    // ou que contenham palavras do nosso próprio card flutuante
+                                    val filteredOcr = ocrLines.filter { item ->
+                                        // A nossa pílula fica no topo (y < 230). O card da corrida da 99/Uber fica da metade para baixo (y > 300)
+                                        val isNotOurFloatingZone = item.topY > 230
+                                        val isNotSelfOverlay = !RideScreenParser.isSelfOverlayLine(item.text)
+                                        isNotOurFloatingZone && isNotSelfOverlay
+                                    }
+
+                                    val sortedOcr = filteredOcr.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
                                     val fullOcrText = sortedOcr.joinToString("\n") { it.text }
 
                                     // Só prossegue se tiver elementos de oferta ou de app de corrida
                                     if (!RideScreenParser.isInsideOwnAppOrHistoryScreen(fullOcrText, null)) {
-                                        val cleanOcr = sortedOcr.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
-                                        val payload = RideScreenParser.parseRideCard(cleanOcr, "com.app99.driver", nowSec)
+                                        val payload = RideScreenParser.parseRideCard(sortedOcr, "com.app99.driver", nowSec)
 
                                         if (payload != null) {
                                             val ocrDump = "👁️ [OCR VISUAL ML KIT - OFERTA DETECTADA]\n$fullOcrText"
