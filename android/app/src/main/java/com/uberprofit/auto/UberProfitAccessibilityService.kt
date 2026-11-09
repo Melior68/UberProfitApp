@@ -347,7 +347,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                     lp.marginStart = dp(6)
                     layoutParams = lp
                     setOnClickListener {
-                        AppStateRepository.setShiftReadingEnabled(this@UberProfitAccessibilityService, false)
+                        AppStateRepository.toggleShiftReading(this@UberProfitAccessibilityService)
                     }
                 }
                 pauseButtonView = pauseBtn
