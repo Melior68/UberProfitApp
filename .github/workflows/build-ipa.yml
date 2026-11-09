@@ -1,58 +1,51 @@
-name: Build Unsigned IPA
+name: Build UberProfitApp (Android APK & iOS IPA)
 
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  build-ipa:
-    name: Build UberProfitApp IPA (Unsigned for Sideloadly/SideStore)
-    runs-on: macos-latest
+  build-apk:
+    name: Build UberProfitApp Signed Android APK
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Generate Release Signing Keystore
+        working-directory: android/app
         run: |
-          if ! command -v xcodegen &> /dev/null; then
-            brew install xcodegen
+          if [ ! -f release-keystore.jks ]; then
+            keytool -genkeypair -v -keystore release-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias uberprofit -storepass uberprofit123 -keypass uberprofit123 -dname "CN=UberProfitAuto, OU=Mobile, O=UberProfit, L=SaoPaulo, ST=SP, C=BR"
           fi
 
-      - name: Generate Xcode Project
+      - name: Build Signed Release APK with Gradle
+        working-directory: android
         run: |
-          xcodegen generate
+          gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Build Unsigned Release App & Broadcast Extension
+      - name: Prepare UberProfitApp_V7_Android.apk
         run: |
-          xcodebuild clean build \
-            -project UberProfitApp.xcodeproj \
-            -scheme UberProfitApp \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Package Payload into UberProfitApp.ipa
-        run: |
-          mkdir -p Payload
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "UberProfitApp.app" -type d | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "Erro: UberProfitApp.app não encontrado!"
+          APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "Erro: APK nao encontrado!"
             exit 1
           fi
-          cp -R "$APP_PATH" Payload/
-          zip -r9 UberProfitApp.ipa Payload
+          cp "$APK_PATH" UberProfitApp_V7_Android.apk
+          ls -lh UberProfitApp_V7_Android.apk
 
-      - name: Upload UberProfitApp.ipa Artifact
+      - name: Upload UberProfitApp-APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UberProfitApp-IPA
-          path: UberProfitApp.ipa
+          name: UberProfitApp-APK
+          path: UberProfitApp_V7_Android.apk
           if-no-files-found: error
           retention-days: 30
