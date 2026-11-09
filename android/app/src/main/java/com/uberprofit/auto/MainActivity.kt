@@ -471,12 +471,26 @@ private fun LivePreviewSection(
                 modifier = Modifier
                     .size(10.dp)
                     .clip(CircleShape)
-                    .background(if (isAccessibilityActive) Color(0xFF10B981) else Color(0xFFF59E0B))
+                    .background(
+                        when {
+                            !isAccessibilityActive -> Color(0xFFF59E0B)
+                            !settings.isShiftReadingEnabled -> Color(0xFFEF4444)
+                            else -> Color(0xFF10B981)
+                        }
+                    )
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = if (isAccessibilityActive) "Leitor Ativo" else "Ative o Leitor Abaixo",
-                color = if (isAccessibilityActive) Color(0xFF10B981) else Color(0xFFF59E0B),
+                text = when {
+                    !isAccessibilityActive -> "Permissão Pendente"
+                    !settings.isShiftReadingEnabled -> "Leitor Desligado (Pausado)"
+                    else -> "Leitor Ativo"
+                },
+                color = when {
+                    !isAccessibilityActive -> Color(0xFFF59E0B)
+                    !settings.isShiftReadingEnabled -> Color(0xFFEF4444)
+                    else -> Color(0xFF10B981)
+                },
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -497,7 +511,7 @@ private fun LivePreviewSection(
                 .background(bgColor)
                 .border(
                     width = 2.dp,
-                    color = if (isAccessibilityActive) Color(0xFF10B981).copy(alpha = 0.6f) else Color.White.copy(alpha = 0.14f),
+                    color = if (isAccessibilityActive && settings.isShiftReadingEnabled) Color(0xFF10B981).copy(alpha = 0.6f) else Color.White.copy(alpha = 0.14f),
                     shape = RoundedCornerShape(16.dp)
                 )
                 .padding(14.dp),
@@ -558,6 +572,25 @@ private fun LivePreviewSection(
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+            } else if (!settings.isShiftReadingEnabled) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "⏸️ LEITOR DESLIGADO (FORA DE TURNO)",
+                        color = Color(0xFFF87171),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 17.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "O leitor está pausado e não lê nenhuma tela agora.\nToque no botão verde abaixo quando for trabalhar!",
+                        color = Color(0xFF9CA3AF),
+                        fontSize = 12.5.sp,
+                        textAlign = TextAlign.Center
                     )
                 }
             } else {
@@ -657,39 +690,76 @@ private fun ShiftControlsSection(
     val context = LocalContext.current
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // CHAVE GERAL DE 1 TOQUE: LIGAR / DESLIGAR LEITOR (INICIAR / PAUSAR TURNO)
+        Button(
+            onClick = { AppStateRepository.toggleShiftReading(context) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (settings.isShiftReadingEnabled) Color(0xFFDC2626) else Color(0xFF10B981)
+            )
+        ) {
+            Icon(
+                imageVector = if (settings.isShiftReadingEnabled) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(26.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(horizontalAlignment = Alignment.Start) {
+                Text(
+                    text = if (settings.isShiftReadingEnabled) "DESLIGAR / PAUSAR LEITOR" else "LIGAR LEITOR (INICIAR TURNO)",
+                    color = Color.White,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.5.sp
+                )
+                Text(
+                    text = if (settings.isShiftReadingEnabled) {
+                        "Leitor está ATIVO agora • Toque aqui quando parar de rodar"
+                    } else {
+                        "Leitor está DESLIGADO • Toque aqui para começar a ler Uber/99"
+                    },
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 11.sp
+                )
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Botão 1: Acessibilidade (Leitor Automático + Janela Flutuante em 1 única permissão!)
+            // Botão 1: Acessibilidade (Permissão do Sistema)
             Button(
                 onClick = onOpenAccessibilitySettings,
                 modifier = Modifier
                     .weight(1f)
-                    .height(58.dp),
+                    .height(54.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isAccessibilityActive) Color(0xFF059669) else Color(0xFF2563EB)
+                    containerColor = if (isAccessibilityActive) Color(0xFF1F2937) else Color(0xFF2563EB)
                 ),
                 contentPadding = PaddingValues(horizontal = 10.dp)
             ) {
                 Icon(
-                    imageVector = if (isAccessibilityActive) Icons.Default.CheckCircle else Icons.Default.Visibility,
+                    imageVector = if (isAccessibilityActive) Icons.Default.VerifiedUser else Icons.Default.Visibility,
                     contentDescription = null,
-                    tint = Color.White
+                    tint = if (isAccessibilityActive) Color(0xFF10B981) else Color.White
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(horizontalAlignment = Alignment.Start) {
                     Text(
-                        text = if (isAccessibilityActive) "Leitor Ativo" else "1. Ativar Leitor",
+                        text = if (isAccessibilityActive) "Permissão OK" else "1. Autorizar App",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = 12.5.sp
                     )
                     Text(
-                        text = if (isAccessibilityActive) "Lendo Uber e 99" else "1 Permissão Única",
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 10.5.sp
+                        text = if (isAccessibilityActive) "Acessibilidade ligada" else "Fazer 1 única vez",
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = 10.sp
                     )
                 }
             }

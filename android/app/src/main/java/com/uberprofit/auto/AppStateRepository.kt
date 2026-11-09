@@ -83,7 +83,21 @@ object AppStateRepository {
             _latestAnalysis.value = reevaluated
             _lastSeenAnalysis.value = reevaluated
         }
-        UberProfitAccessibilityService.refreshIfRunning()
+        if (!updated.isShiftReadingEnabled) {
+            _latestAnalysis.value = null
+            UberProfitAccessibilityService.hideOverlayFromMasterSwitch()
+        } else {
+            UberProfitAccessibilityService.refreshIfRunning()
+        }
+    }
+
+    fun toggleShiftReading(context: Context) {
+        initIfNeeded(context)
+        val newState = !_settings.value.isShiftReadingEnabled
+        updateSettings(context) { it.copy(isShiftReadingEnabled = newState) }
+        if (newState && _settings.value.visualAlertMode != VisualAlertMode.NOTIFICATION) {
+            UberProfitAccessibilityService.showOrUpdateOffer()
+        }
     }
 
     fun processIncomingOffer(context: Context, offer: RideOfferPayload) {
@@ -188,7 +202,8 @@ object AppStateRepository {
             dailyNetGoalBRL = p.getFloat("dailyNetGoalBRL", 250.0f).toDouble(),
             extraDailyExpenseBRL = p.getFloat("extraDailyExpenseBRL", 0.0f).toDouble(),
             autoDetectAcceptedRides = p.getBoolean("autoDetectAcceptedRides", true),
-            showQuickGuide = p.getBoolean("showQuickGuide", true)
+            showQuickGuide = p.getBoolean("showQuickGuide", true),
+            isShiftReadingEnabled = p.getBoolean("isShiftReadingEnabled", true)
         )
 
         val savedAccepted = RideAnalysis.listFromJsonString(p.getString(KEY_ACCEPTED_RIDES, null))
@@ -215,6 +230,7 @@ object AppStateRepository {
             putFloat("extraDailyExpenseBRL", s.extraDailyExpenseBRL.toFloat())
             putBoolean("autoDetectAcceptedRides", s.autoDetectAcceptedRides)
             putBoolean("showQuickGuide", s.showQuickGuide)
+            putBoolean("isShiftReadingEnabled", s.isShiftReadingEnabled)
             apply()
         }
     }

@@ -48,7 +48,8 @@ class UberProfitAccessibilityService : AccessibilityService() {
         activeInstance = this
         AppStateRepository.initIfNeeded(this)
         AppStateRepository.setAccessibilityConnected(true)
-        if (AppStateRepository.settings.value.visualAlertMode != VisualAlertMode.NOTIFICATION) {
+        val s = AppStateRepository.settings.value
+        if (s.isShiftReadingEnabled && s.visualAlertMode != VisualAlertMode.NOTIFICATION) {
             showOrUpdateOverlayInternal()
         }
     }
@@ -73,6 +74,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
 
         val pkgName = event.packageName?.toString()
         if (pkgName == packageName) return
@@ -501,7 +503,14 @@ class UberProfitAccessibilityService : AccessibilityService() {
             get() = activeInstance != null
 
         fun showOrUpdateOffer() {
+            if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
             activeInstance?.showOrUpdateOverlayInternal()
+        }
+
+        fun hideOverlayFromMasterSwitch() {
+            val inst = activeInstance ?: return
+            inst.removeFloatingViewInternal()
+            AppStateRepository.setOverlayActive(false)
         }
 
         fun refreshIfRunning() {
