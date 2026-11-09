@@ -10,7 +10,7 @@ on:
 jobs:
   build-ipa:
     name: Build UberProfitApp IPA (Unsigned for Sideloadly/SideStore)
-    runs-on: macos-14
+    runs-on: macos-latest
 
     steps:
       - name: Checkout Repository
