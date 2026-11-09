@@ -3,9 +3,6 @@ name: Build Android APK
 on:
   push:
     branches: [ "main", "master" ]
-    paths:
-      - 'android/**'
-      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 jobs:
@@ -23,11 +20,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Gradle 8.7
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
-
       - name: Generate Release Signing Keystore
         working-directory: android/app
         run: |
@@ -43,7 +35,7 @@ jobs:
               -dname "CN=UberProfitAuto, OU=Mobile, O=UberProfit, L=SaoPaulo, ST=SP, C=BR"
           fi
 
-      - name: Build Signed Release APK
+      - name: Build Signed Release APK with Gradle
         working-directory: android
         run: |
           gradle assembleRelease --no-daemon --stacktrace
