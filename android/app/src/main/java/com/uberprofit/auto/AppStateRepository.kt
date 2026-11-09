@@ -38,6 +38,14 @@ object AppStateRepository {
     private val _isOverlayActive = MutableStateFlow(false)
     val isOverlayActive: StateFlow<Boolean> = _isOverlayActive.asStateFlow()
 
+    // Diagnóstico: último texto bruto que o leitor enxergou dentro da Uber/99
+    private val _lastScreenDump = MutableStateFlow("")
+    val lastScreenDump: StateFlow<String> = _lastScreenDump.asStateFlow()
+
+    fun setLastScreenDump(dump: String) {
+        _lastScreenDump.value = dump
+    }
+
     fun initIfNeeded(context: Context) {
         val appCtx = context.applicationContext
         if (prefs == null) {

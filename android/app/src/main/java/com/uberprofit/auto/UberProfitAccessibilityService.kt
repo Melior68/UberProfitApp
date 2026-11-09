@@ -67,6 +67,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         mainHandler.removeCallbacks(autoClearRunnable)
+        mainHandler.removeCallbacks(scanRunnable)
+        mainHandler.removeCallbacks(heartbeatRunnable)
+        heartbeatRunning = false
         removeFloatingViewInternal()
         activeInstance = null
         AppStateRepository.setAccessibilityConnected(false)
@@ -76,6 +79,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(autoClearRunnable)
+        mainHandler.removeCallbacks(scanRunnable)
+        mainHandler.removeCallbacks(heartbeatRunnable)
+        heartbeatRunning = false
         removeFloatingViewInternal()
         activeInstance = null
         AppStateRepository.setAccessibilityConnected(false)
@@ -115,40 +121,103 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Throttle de 280ms para economia de bateria e CPU fria
-        val nowMillis = System.currentTimeMillis()
-        if (nowMillis - lastProcessedMillis < 280L) return
-        lastProcessedMillis = nowMillis
-
-        // 2. Varre a janela ativa principal e, se necessário, janelas interativas sobrepostas (ex: card da Uber/99 sobre o Waze/Maps)
-        var detectedPayload: RideOfferPayload? = null
-        var activeScreenText = ""
-
-        val primaryRoot = rootInActiveWindow
-        if (primaryRoot != null) {
-            val res = inspectWindowNode(primaryRoot, pkgName, nowSec)
-            detectedPayload = res.first
-            activeScreenText = res.second
+        if (RideScreenParser.isRideAppPackage(pkgName)) {
+            lastRideAppEventMillis = System.currentTimeMillis()
+            startHeartbeatIfNeeded()
         }
 
-        if (detectedPayload == null) {
-            try {
-                val interactiveWindows = windows
-                if (interactiveWindows != null) {
-                    for (win in interactiveWindows) {
-                        val winRoot = win.root ?: continue
-                        val winPkg = winRoot.packageName?.toString()
-                        if (winPkg == packageName || RideScreenParser.isIgnoredPackage(winPkg)) continue
-                        val res = inspectWindowNode(winRoot, winPkg, nowSec)
-                        if (res.first != null) {
-                            detectedPayload = res.first
-                            activeScreenText = res.second
-                            break
-                        }
-                    }
-                }
-            } catch (_: Exception) {
+        // Trailing debounce: sempre agenda uma varredura ~250ms após o ÚLTIMO evento.
+        // (Antes, o throttle descartava os eventos finais e o card da 99/Uber nunca era relido.)
+        mainHandler.removeCallbacks(scanRunnable)
+        val nowMillis = System.currentTimeMillis()
+        if (nowMillis - lastProcessedMillis >= 600L) {
+            performScan()
+        } else {
+            mainHandler.postDelayed(scanRunnable, 250L)
+        }
+    }
+
+    private var lastRideAppEventMillis: Long = 0L
+    private var heartbeatRunning = false
+
+    private val scanRunnable = Runnable { performScan() }
+
+    // Varredura periódica leve (a cada 1,2s) enquanto a Uber/99 está em uso,
+    // para pegar ofertas mesmo quando o app não dispara eventos de acessibilidade.
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            val s = AppStateRepository.settings.value
+            val idleMs = System.currentTimeMillis() - lastRideAppEventMillis
+            if (!s.isShiftReadingEnabled || idleMs > 120_000L) {
+                heartbeatRunning = false
+                return
             }
+            performScan()
+            mainHandler.postDelayed(this, 1200L)
+        }
+    }
+
+    private fun startHeartbeatIfNeeded() {
+        if (heartbeatRunning) return
+        heartbeatRunning = true
+        mainHandler.postDelayed(heartbeatRunnable, 1200L)
+    }
+
+    private fun performScan() {
+        if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
+        lastProcessedMillis = System.currentTimeMillis()
+        val nowSec = lastProcessedMillis / 1000.0
+
+        var detectedPayload: RideOfferPayload? = null
+        var activeScreenText = ""
+        val dump = StringBuilder()
+
+        // Junta a janela ativa + todas as janelas interativas (cards da Uber/99 por cima do Waze/Maps)
+        val roots = mutableListOf<AccessibilityNodeInfo>()
+        try {
+            rootInActiveWindow?.let { roots.add(it) }
+        } catch (_: Exception) {
+        }
+        try {
+            windows?.forEach { win ->
+                val r = win.root
+                if (r != null) roots.add(r)
+            }
+        } catch (_: Exception) {
+        }
+
+        val seenKeys = HashSet<String>()
+        for (root in roots) {
+            val rootPkg = root.packageName?.toString()
+            if (rootPkg == packageName || RideScreenParser.isIgnoredPackage(rootPkg)) continue
+            val key = "${rootPkg}_${root.windowId}"
+            if (!seenKeys.add(key)) continue
+
+            val res = inspectWindowNode(root, rootPkg, nowSec)
+            if (RideScreenParser.isRideAppPackage(rootPkg) && res.second.isNotEmpty()) {
+                dump.append("📦 ").append(rootPkg).append("\n").append(res.second).append("\n\n")
+            }
+            if (res.second.isNotEmpty() && activeScreenText.isEmpty()) {
+                activeScreenText = res.second
+            }
+            if (res.first != null) {
+                detectedPayload = res.first
+                activeScreenText = res.second
+                break
+            }
+        }
+
+        if (dump.isNotEmpty()) {
+            val header = if (detectedPayload != null) {
+                String.format(
+                    java.util.Locale("pt", "BR"),
+                    "✅ OFERTA RECONHECIDA: R$ %.2f • %.1f km • %d min\n\n",
+                    detectedPayload.fareBRL, detectedPayload.totalDistanceKm, detectedPayload.totalMinutes
+                )
+            } else {
+                "⚠️ Nenhuma oferta reconhecida nesta leitura\n\n"
+            }
+            AppStateRepository.setLastScreenDump(header + dump.toString().take(4000))
         }
 
         if (detectedPayload == null) {
@@ -199,7 +268,13 @@ class UberProfitAccessibilityService : AccessibilityService() {
         nowSec: Double
     ): Pair<RideOfferPayload?, String> {
         val collectedLines = mutableListOf<ScreenTextLine>()
-        collectTextLines(rootNode, collectedLines)
+        collectTextLines(rootNode, collectedLines, requireVisible = true, depth = 0)
+        // Alguns apps (ex: 99) marcam os textos do card como "não visíveis" para a acessibilidade.
+        // Se não achamos nenhum "R$", refazemos a coleta sem o filtro de visibilidade.
+        if (RideScreenParser.isRideAppPackage(pkgName) && collectedLines.none { it.text.contains("R$") }) {
+            collectedLines.clear()
+            collectTextLines(rootNode, collectedLines, requireVisible = false, depth = 0)
+        }
         if (collectedLines.isEmpty()) return Pair(null, "")
 
         val sortedLines = collectedLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
@@ -216,32 +291,27 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
     private fun collectTextLines(
         node: AccessibilityNodeInfo?,
-        output: MutableList<ScreenTextLine>
+        output: MutableList<ScreenTextLine>,
+        requireVisible: Boolean,
+        depth: Int
     ) {
-        if (node == null || !node.isVisibleToUser) return
+        if (node == null || depth > 60 || output.size > 600) return
+        if (requireVisible && !node.isVisibleToUser) return
 
-        val rawText = node.text?.toString()?.trim()
-        val rawDesc = node.contentDescription?.toString()?.trim()
-        val chosen = when {
-            !rawText.isNullOrEmpty() -> rawText
-            !rawDesc.isNullOrEmpty() -> rawDesc
-            else -> null
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        // Ignora nós fora da tela (bounds vazios) quando estamos sem filtro de visibilidade
+        if (!requireVisible && (rect.width() <= 0 || rect.height() <= 0)) return
+
+        val rawText = node.text?.toString()?.let { normalizeText(it) }
+        val rawDesc = node.contentDescription?.toString()?.let { normalizeText(it) }
+
+        // Lê o texto E a descrição (algumas versões da 99/Uber colocam o valor só na descrição)
+        if (!rawText.isNullOrEmpty()) {
+            output.add(ScreenTextLine(text = rawText, topY = rect.top, height = rect.height().coerceAtLeast(12), leftX = rect.left))
         }
-
-        if (!chosen.isNullOrEmpty()) {
-            val clean = chosen.replace('\u00A0', ' ').trim()
-            if (clean.isNotEmpty()) {
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
-                output.add(
-                    ScreenTextLine(
-                        text = clean,
-                        topY = rect.top,
-                        height = rect.height().coerceAtLeast(12),
-                        leftX = rect.left
-                    )
-                )
-            }
+        if (!rawDesc.isNullOrEmpty() && rawDesc != rawText) {
+            output.add(ScreenTextLine(text = rawDesc, topY = rect.top, height = rect.height().coerceAtLeast(12), leftX = rect.left))
         }
 
         val childCount = node.childCount
@@ -252,9 +322,17 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 null
             }
             if (child != null) {
-                collectTextLines(child, output)
+                collectTextLines(child, output, requireVisible, depth + 1)
             }
         }
+    }
+
+    private fun normalizeText(raw: String): String {
+        return raw
+            .replace('\u00A0', ' ')
+            .replace('\u202F', ' ')
+            .replace('\u2009', ' ')
+            .trim()
     }
 
     private fun checkAndClearStaleCard(nowSec: Double) {

@@ -59,6 +59,14 @@ object RideScreenParser {
         return ignoredPackages.contains(packageName.lowercase())
     }
 
+    /** Pacotes da Uber Driver (com.ubercab.driver), 99 Motorista (com.app99.driver / com.taxis99) e DiDi. */
+    fun isRideAppPackage(packageName: String?): Boolean {
+        if (packageName.isNullOrBlank()) return false
+        val p = packageName.lowercase()
+        if (p == "com.uberprofit.auto") return false
+        return p.contains("uber") || p.contains("99") || p.contains("didi") || p.contains("taxis")
+    }
+
     fun isInsideOwnAppOrHistoryScreen(screenText: String, packageName: String?): Boolean {
         if (packageName == "com.uberprofit.auto") return true
 

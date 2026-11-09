@@ -396,6 +396,90 @@ private fun OperationTabView(
             AppStateRepository.processIncomingOffer(context, offer)
         }
     )
+
+    ReaderDiagnosticSection()
+}
+
+@Composable
+private fun ReaderDiagnosticSection() {
+    val context = LocalContext.current
+    val dump by AppStateRepository.lastScreenDump.collectAsState()
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF161E2E))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.BugReport, contentDescription = null, tint = Color(0xFF60A5FA), modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Diagnóstico: o que o leitor está vendo na Uber/99",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.5.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = Color(0xFF9CA3AF)
+            )
+        }
+
+        if (expanded) {
+            if (dump.isBlank()) {
+                Text(
+                    text = "Nada lido ainda. Abra a Uber ou 99 com o leitor LIGADO, espere tocar uma corrida e volte aqui.\n\nSe continuar vazio mesmo com corrida na tela, o app de corrida está bloqueando a leitura por acessibilidade.",
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 11.5.sp
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF0B0F17))
+                        .verticalScroll(rememberScrollState())
+                        .padding(10.dp)
+                ) {
+                    Text(
+                        text = dump,
+                        color = Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.5.sp
+                    )
+                }
+                Button(
+                    onClick = {
+                        try {
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, "Diagnóstico Uber & 99 Profit:\n\n$dump")
+                            }
+                            context.startActivity(Intent.createChooser(sendIntent, "Enviar diagnóstico"))
+                        } catch (_: Exception) {
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("📤 Enviar diagnóstico (WhatsApp)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
 }
 
 @Composable
