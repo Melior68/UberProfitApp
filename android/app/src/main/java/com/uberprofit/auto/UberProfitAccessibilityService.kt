@@ -8,6 +8,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -195,6 +196,102 @@ class UberProfitAccessibilityService : AccessibilityService() {
         mainHandler.postDelayed(heartbeatRunnable, 1200L)
     }
 
+    private var isOcrProcessing = false
+    private var lastOcrMillis = 0L
+
+    /**
+     * OCR Visual Direto via Google ML Kit: Captura a tela e extrai os textos visíveis.
+     * Funciona mesmo que a 99 use Flutter, Canvas ou bloqueie a árvore de Acessibilidade!
+     */
+    private fun tryVisualOcrScan(nowSec: Double) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (isOcrProcessing) return
+        val now = System.currentTimeMillis()
+        if (now - lastOcrMillis < 1200L) return
+
+        isOcrProcessing = true
+        lastOcrMillis = now
+
+        try {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        val hardwareBuffer = screenshot.hardwareBuffer
+                        val colorSpace = screenshot.colorSpace
+                        var bitmap: android.graphics.Bitmap? = null
+                        try {
+                            val rawBitmap = android.graphics.Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                            bitmap = rawBitmap?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                        } catch (_: Exception) {
+                        } finally {
+                            try { hardwareBuffer.close() } catch (_: Exception) {}
+                        }
+
+                        if (bitmap == null) {
+                            isOcrProcessing = false
+                            return
+                        }
+
+                        // Processa com Google ML Kit Text Recognition
+                        val inputImage = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+                        val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+                            com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
+                        )
+
+                        recognizer.process(inputImage)
+                            .addOnSuccessListener { visionText ->
+                                val ocrLines = mutableListOf<ScreenTextLine>()
+                                for (block in visionText.textBlocks) {
+                                    for (line in block.lines) {
+                                        val box = line.boundingBox
+                                        val top = box?.top ?: 0
+                                        val left = box?.left ?: 0
+                                        val height = box?.height() ?: 24
+                                        val norm = normalizeText(line.text)
+                                        if (norm.isNotEmpty()) {
+                                            ocrLines.add(ScreenTextLine(text = norm, topY = top, leftX = left, height = height))
+                                        }
+                                    }
+                                }
+
+                                if (ocrLines.isNotEmpty()) {
+                                    val sortedOcr = ocrLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
+                                    val fullOcrText = sortedOcr.joinToString("\n") { it.text }
+
+                                    // Só prossegue se tiver elementos de oferta ou de app de corrida
+                                    if (!RideScreenParser.isInsideOwnAppOrHistoryScreen(fullOcrText, null)) {
+                                        val cleanOcr = sortedOcr.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
+                                        val payload = RideScreenParser.parseRideCard(cleanOcr, "com.app99.driver", nowSec)
+
+                                        if (payload != null) {
+                                            val ocrDump = "👁️ [OCR VISUAL ML KIT - OFERTA DETECTADA]\n$fullOcrText"
+                                            AppStateRepository.setLastScreenDump(ocrDump, isRichOrOffer = true)
+                                            handleRecognizedOffer(payload, nowSec)
+                                        } else if (fullOcrText.contains("R$") || fullOcrText.contains("/km") || fullOcrText.contains("min (")) {
+                                            val ocrDump = "👁️ [OCR VISUAL ML KIT - LIDO DA TELA]\n$fullOcrText"
+                                            AppStateRepository.setLastScreenDump(ocrDump, isRichOrOffer = true)
+                                        }
+                                    }
+                                }
+                                isOcrProcessing = false
+                            }
+                            .addOnFailureListener {
+                                isOcrProcessing = false
+                            }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        isOcrProcessing = false
+                    }
+                }
+            )
+        } catch (_: Exception) {
+            isOcrProcessing = false
+        }
+    }
+
     private fun performScan() {
         if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
         lastProcessedMillis = System.currentTimeMillis()
@@ -282,6 +379,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
         }
 
         if (detectedPayload == null) {
+            // Se a árvore de acessibilidade não detectou oferta, roda o OCR Visual ML Kit da tela!
+            tryVisualOcrScan(nowSec)
+
             if (!didSendAcceptedForLastOffer &&
                 lastValidOfferSeenTimeSec > 0 &&
                 (nowSec - lastValidOfferSeenTimeSec) <= 22.0 &&
@@ -298,7 +398,11 @@ class UberProfitAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Oferta válida encontrada na tela!
+        // Oferta válida encontrada na árvore de acessibilidade!
+        handleRecognizedOffer(detectedPayload, nowSec)
+    }
+
+    private fun handleRecognizedOffer(detectedPayload: RideOfferPayload, nowSec: Double) {
         lastValidOfferSeenTimeSec = nowSec
         didSendClearCard = false
         didSendAcceptedForLastOffer = false

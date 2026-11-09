@@ -11,8 +11,8 @@ android {
         applicationId = "com.uberprofit.auto"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "12.0"
+        versionCode = 13
+        versionName = "13.0"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -87,4 +87,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+
+    // Reconhecimento Óptico de Caracteres (OCR Local via Google ML Kit - 100% offline, rápido e preciso)
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
