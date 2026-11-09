@@ -808,18 +808,33 @@ private fun ShiftControlsSection(
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // CHAVE GERAL DE 1 TOQUE: LIGAR / DESLIGAR LEITOR (INICIAR / PAUSAR TURNO)
+        val canToggleShift = isAccessibilityActive
         Button(
-            onClick = { AppStateRepository.toggleShiftReading(context) },
+            onClick = {
+                if (!canToggleShift) {
+                    onOpenAccessibilitySettings()
+                } else {
+                    AppStateRepository.toggleShiftReading(context)
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(62.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (settings.isShiftReadingEnabled) Color(0xFFDC2626) else Color(0xFF059669)
+                containerColor = when {
+                    !canToggleShift -> Color(0xFF374151)
+                    settings.isShiftReadingEnabled -> Color(0xFFDC2626)
+                    else -> Color(0xFF059669)
+                }
             )
         ) {
             Icon(
-                imageVector = if (settings.isShiftReadingEnabled) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
+                imageVector = when {
+                    !canToggleShift -> Icons.Default.Lock
+                    settings.isShiftReadingEnabled -> Icons.Default.PauseCircleFilled
+                    else -> Icons.Default.PlayCircleFilled
+                },
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(28.dp)
@@ -827,16 +842,20 @@ private fun ShiftControlsSection(
             Spacer(modifier = Modifier.width(10.dp))
             Column(horizontalAlignment = Alignment.Start) {
                 Text(
-                    text = if (settings.isShiftReadingEnabled) "DESLIGAR / PAUSAR LEITOR" else "LIGAR LEITOR (INICIAR TURNO)",
+                    text = when {
+                        !canToggleShift -> "AUTORIZE A ACESSIBILIDADE PRIMEIRO"
+                        settings.isShiftReadingEnabled -> "DESLIGAR / PAUSAR LEITOR"
+                        else -> "LIGAR LEITOR (INICIAR TURNO)"
+                    },
                     color = Color.White,
                     fontWeight = FontWeight.Black,
-                    fontSize = 14.5.sp
+                    fontSize = 14.sp
                 )
                 Text(
-                    text = if (settings.isShiftReadingEnabled) {
-                        "Leitor ATIVO • Toque aqui quando parar de trabalhar"
-                    } else {
-                        "Leitor PAUSADO • Toque aqui para monitorar Uber e 99"
+                    text = when {
+                        !canToggleShift -> "Toque no botão '1. Autorizar App' abaixo para ativar o serviço"
+                        settings.isShiftReadingEnabled -> "Leitor ATIVO • Toque aqui quando parar de trabalhar"
+                        else -> "Leitor PAUSADO • Toque aqui para iniciar o monitoramento"
                     },
                     color = Color.White.copy(alpha = 0.92f),
                     fontSize = 11.sp

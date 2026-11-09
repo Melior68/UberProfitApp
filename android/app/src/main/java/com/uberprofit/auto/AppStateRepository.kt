@@ -128,6 +128,11 @@ object AppStateRepository {
 
     fun toggleShiftReading(context: Context) {
         initIfNeeded(context)
+        refreshServiceStatuses(context)
+        if (!_isAccessibilityActive.value) {
+            // Se a permissão não foi dada, não permite ligar o turno!
+            return
+        }
         val newState = !_settings.value.isShiftReadingEnabled
         updateSettings(context) { it.copy(isShiftReadingEnabled = newState) }
         if (newState && _settings.value.visualAlertMode != VisualAlertMode.NOTIFICATION) {
@@ -238,7 +243,7 @@ object AppStateRepository {
             extraDailyExpenseBRL = p.getFloat("extraDailyExpenseBRL", 0.0f).toDouble(),
             autoDetectAcceptedRides = p.getBoolean("autoDetectAcceptedRides", true),
             showQuickGuide = p.getBoolean("showQuickGuide", true),
-            isShiftReadingEnabled = p.getBoolean("isShiftReadingEnabled", true)
+            isShiftReadingEnabled = p.getBoolean("isShiftReadingEnabled", false)
         )
 
         val savedAccepted = RideAnalysis.listFromJsonString(p.getString(KEY_ACCEPTED_RIDES, null))

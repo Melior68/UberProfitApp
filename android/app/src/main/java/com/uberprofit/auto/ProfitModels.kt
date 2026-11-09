@@ -175,7 +175,7 @@ data class DriverSettings(
     val extraDailyExpenseBRL: Double = 0.00,
     val autoDetectAcceptedRides: Boolean = true,
     val showQuickGuide: Boolean = true,
-    val isShiftReadingEnabled: Boolean = true
+    val isShiftReadingEnabled: Boolean = false
 ) {
     val fuelCostPerKm: Double
         get() = fuelPriceBRLPerLiter / max(carConsumptionKmPerLiter, 1.0)
