@@ -1,26 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissão de Janela Flutuante sobre Uber e 99 -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-
-    <!-- Serviço em Primeiro Plano para manter Janela Flutuante e Voz sempre ativas -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-
-    <!-- Notificações de Topo (Heads-Up Banner) e Vibração -->
+    <!-- Apenas Notificações e Vibração (Sem SYSTEM_ALERT_WINDOW e Sem FOREGROUND_SERVICE para não acionar bloqueio do Play Protect) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Visibilidade para TTS em Português e Apps de Motorista no Android 11+ -->
+    <!-- Visibilidade para motor de Voz (TTS) em Português -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
-        <package android:name="com.ubercab.driver" />
-        <package android:name="com.taxis99.driver" />
-        <package android:name="com.didiglobal.driver" />
     </queries>
 
     <application
@@ -42,7 +31,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Leitor Automático de Tela (Uber Driver + 99 Motorista) -->
+        <!-- Leitor Automático + Janela Flutuante Nativa (TYPE_ACCESSIBILITY_OVERLAY) restrito apenas à Uber e 99 -->
         <service
             android:name=".UberProfitAccessibilityService"
             android:exported="false"
@@ -56,18 +45,7 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Serviço da Janela Flutuante Arrastável (Equivalente ao PiP no Android) -->
-        <service
-            android:name=".FloatingOverlayService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Exibe janela flutuante de cálculo de lucro para motoristas de aplicativo em turno ativo." />
-        </service>
-
-        <!-- Receiver para botões de ação rápida da Notificação ("Aceitei essa Corrida") -->
+        <!-- Receiver para botão de ação rápida da Notificação ("Aceitei essa Corrida") -->
         <receiver
             android:name=".NotificationActionReceiver"
             android:exported="false" />

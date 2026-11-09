@@ -10,9 +10,9 @@ import kotlin.math.abs
 
 object AppStateRepository {
 
-    private const val PREFS_NAME = "UberProfit_Android_Prefs_V7"
-    private const val KEY_ACCEPTED_RIDES = "UberProfit_AcceptedRides_V7"
-    private const val KEY_OFFER_HISTORY = "UberProfit_OfferHistory_V7"
+    private const val PREFS_NAME = "UberProfit_Android_Prefs_V8"
+    private const val KEY_ACCEPTED_RIDES = "UberProfit_AcceptedRides_V8"
+    private const val KEY_OFFER_HISTORY = "UberProfit_OfferHistory_V8"
 
     private var prefs: SharedPreferences? = null
     private var voiceManager: VoiceAlertManager? = null
@@ -77,14 +77,13 @@ object AppStateRepository {
         _settings.value = updated
         saveSettingsToPrefs(updated)
 
-        // Atualiza a janela flutuante caso esteja visível
         val current = _latestAnalysis.value
         if (current != null) {
             val reevaluated = ProfitCalculator.evaluate(current.offer, updated)
             _latestAnalysis.value = reevaluated
             _lastSeenAnalysis.value = reevaluated
         }
-        FloatingOverlayService.refreshIfRunning(context)
+        UberProfitAccessibilityService.refreshIfRunning()
     }
 
     fun processIncomingOffer(context: Context, offer: RideOfferPayload) {
@@ -99,11 +98,9 @@ object AppStateRepository {
         _history.value = updatedHistory
         saveListsToPrefs()
 
-        // 1. Atualiza ou abre a Janela Flutuante se o modo permitir e tiver permissão
-        if (currentSettings.visualAlertMode != VisualAlertMode.NOTIFICATION &&
-            Settings.canDrawOverlays(context)
-        ) {
-            FloatingOverlayService.showOrUpdateOffer(context)
+        // 1. Atualiza ou abre a Janela Flutuante via AccessibilityOverlay (sem precisar de SYSTEM_ALERT_WINDOW!)
+        if (currentSettings.visualAlertMode != VisualAlertMode.NOTIFICATION) {
+            UberProfitAccessibilityService.showOrUpdateOffer()
         }
 
         // 2. Envia Banner de Notificação no Topo se o modo for NOTIFICATION ou BOTH
@@ -123,7 +120,7 @@ object AppStateRepository {
 
     fun clearActiveCard(context: Context) {
         _latestAnalysis.value = null
-        FloatingOverlayService.refreshIfRunning(context)
+        UberProfitAccessibilityService.refreshIfRunning()
     }
 
     fun onAutoDetectedRideAccepted(context: Context) {
@@ -148,7 +145,7 @@ object AppStateRepository {
         if (isRideAlreadyAccepted(ride)) return
         _acceptedRides.value = listOf(ride) + _acceptedRides.value
         saveListsToPrefs()
-        FloatingOverlayService.refreshIfRunning(context)
+        UberProfitAccessibilityService.refreshIfRunning()
     }
 
     fun acceptLatestRide(context: Context) {

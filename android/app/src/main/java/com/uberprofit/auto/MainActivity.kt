@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     UberProfitMainScreen(
                         onOpenAccessibilitySettings = { openAccessibilitySettings() },
-                        onToggleOrRequestOverlay = { toggleOrRequestOverlay() }
+                        onToggleOrRequestOverlay = { toggleOrRequestOverlay() },
+                        onOpenAppDetailsSettings = { openAppDetailsSettings() }
                     )
                 }
             }
@@ -111,18 +112,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openAppDetailsSettings() {
+        try {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun toggleOrRequestOverlay() {
-        if (!Settings.canDrawOverlays(this)) {
-            try {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-                startActivity(intent)
-            } catch (_: Exception) {
-            }
-        } else {
-            FloatingOverlayService.toggleOverlay(this)
+        val toggled = UberProfitAccessibilityService.toggleOverlay()
+        if (!toggled) {
+            openAccessibilitySettings()
         }
     }
 }
@@ -131,7 +135,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun UberProfitMainScreen(
     onOpenAccessibilitySettings: () -> Unit,
-    onToggleOrRequestOverlay: () -> Unit
+    onToggleOrRequestOverlay: () -> Unit,
+    onOpenAppDetailsSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val settings by AppStateRepository.settings.collectAsState()
@@ -209,6 +214,7 @@ fun UberProfitMainScreen(
                         isOverlayActive = isOverlayActive,
                         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onToggleOrRequestOverlay = onToggleOrRequestOverlay,
+                        onOpenAppDetailsSettings = onOpenAppDetailsSettings,
                         onNavigateToTab = { selectedTab = it }
                     )
                     AppSectionTab.EARNINGS -> EarningsTabView(
@@ -326,6 +332,7 @@ private fun OperationTabView(
     isOverlayActive: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onToggleOrRequestOverlay: () -> Unit,
+    onOpenAppDetailsSettings: () -> Unit,
     onNavigateToTab: (AppSectionTab) -> Unit
 ) {
     val context = LocalContext.current
@@ -359,6 +366,7 @@ private fun OperationTabView(
         isOverlayActive = isOverlayActive,
         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
         onToggleOrRequestOverlay = onToggleOrRequestOverlay,
+        onOpenAppDetailsSettings = onOpenAppDetailsSettings,
         onNavigateToCustomize = { onNavigateToTab(AppSectionTab.CUSTOMIZE) }
     )
 
@@ -643,6 +651,7 @@ private fun ShiftControlsSection(
     isOverlayActive: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
     onToggleOrRequestOverlay: () -> Unit,
+    onOpenAppDetailsSettings: () -> Unit,
     onNavigateToCustomize: () -> Unit
 ) {
     val context = LocalContext.current
@@ -652,7 +661,7 @@ private fun ShiftControlsSection(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Botão 1: Acessibilidade (Leitor Automático)
+            // Botão 1: Acessibilidade (Leitor Automático + Janela Flutuante em 1 única permissão!)
             Button(
                 onClick = onOpenAccessibilitySettings,
                 modifier = Modifier
@@ -678,7 +687,7 @@ private fun ShiftControlsSection(
                         fontSize = 13.sp
                     )
                     Text(
-                        text = if (isAccessibilityActive) "Lendo Uber e 99" else "Acessibilidade",
+                        text = if (isAccessibilityActive) "Lendo Uber e 99" else "1 Permissão Única",
                         color = Color.White.copy(alpha = 0.85f),
                         fontSize = 10.5.sp
                     )
@@ -747,6 +756,40 @@ private fun ShiftControlsSection(
                             fontSize = 10.5.sp
                         )
                     }
+                }
+            }
+        }
+
+        if (!isAccessibilityActive) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFF59E0B).copy(alpha = 0.14f))
+                    .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                    .clickable { onOpenAppDetailsSettings() }
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LockOpen,
+                    contentDescription = null,
+                    tint = Color(0xFFF59E0B),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Apareceu \"Configuração Restrita\" no Android 13/14?",
+                        color = Color(0xFFF59E0B),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        text = "Toque aqui → depois nos 3 pontinhos (⋮) no topo → \"Permitir configurações restritas\".",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 11.sp
+                    )
                 }
             }
         }
