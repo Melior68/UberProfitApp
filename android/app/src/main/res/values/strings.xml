@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Uber &amp; 99 Profit Auto</string>
+    <string name="accessibility_service_label">Uber &amp; 99 Profit Leitor Automático</string>
+    <string name="accessibility_service_description">Lê automaticamente os cards de oferta de corrida da Uber Driver e 99 Motorista na tela para calcular em tempo real o R$/km, R$/hora, gasto de combustível e lucro líquido, avisando por voz e janela flutuante.</string>
+</resources>
