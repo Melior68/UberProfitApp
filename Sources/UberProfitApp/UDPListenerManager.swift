@@ -11,6 +11,7 @@ public final class UDPListenerManager: ObservableObject {
     @Published public private(set) var lastPacketTime: Date?
 
     public var onOfferReceived: ((RideOfferPayload) -> Void)?
+    public var onClearCardRequested: (() -> Void)?
 
     private var listener: NWListener?
     private var screenCheckTimer: Timer?
@@ -119,6 +120,11 @@ public final class UDPListenerManager: ObservableObject {
                 if status == "BROADCAST_FINISHED" {
                     self.lastPacketTime = nil
                     self.broadcastActive = UIScreen.main.isCaptured
+                    self.onClearCardRequested?()
+                } else if status == "CLEAR_CARD" {
+                    self.lastPacketTime = Date()
+                    self.broadcastActive = true
+                    self.onClearCardRequested?()
                 } else {
                     self.lastPacketTime = Date()
                     self.broadcastActive = true

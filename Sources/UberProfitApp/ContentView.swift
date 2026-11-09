@@ -879,6 +879,10 @@ public struct ContentView: View {
         udpListener.onOfferReceived = { offer in
             processIncomingOffer(offer)
         }
+        udpListener.onClearCardRequested = {
+            latestAnalysis = nil
+            pipManager.updateCard(with: nil, displayMode: primaryMetricDisplay)
+        }
         udpListener.startListening()
     }
 

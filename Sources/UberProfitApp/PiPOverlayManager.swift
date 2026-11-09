@@ -93,7 +93,7 @@ public final class PiPOverlayManager: NSObject, ObservableObject, @preconcurrenc
         pipController.stopPictureInPicture()
     }
 
-    public func updateCard(with analysis: RideAnalysis, displayMode: PrimaryMetricDisplay = .gross) {
+    public func updateCard(with analysis: RideAnalysis?, displayMode: PrimaryMetricDisplay = .gross) {
         guard currentAnalysis != analysis || currentDisplayMode != displayMode else { return }
         self.currentAnalysis = analysis
         self.currentDisplayMode = displayMode
