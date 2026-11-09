@@ -1,39 +1,63 @@
 package com.uberprofit.auto
 
 import java.util.regex.Pattern
+import kotlin.math.abs
 import kotlin.math.max
 
 data class ScreenTextLine(
     val text: String,
     val topY: Int,
+    val leftX: Int = 0,
     val height: Int
 )
 
 object RideScreenParser {
 
-    // Regex pré-compiladas idênticas ao SampleHandler.swift do iOS
+    // Aceita "R$ 22,80", "R$22.80", "RS 15,00" e também quando o R$ está separado por espaço/quebra
     private val pricePattern: Pattern = Pattern.compile(
         """(?<!\+)(?:R\s*\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)""",
         Pattern.CASE_INSENSITIVE
     )
 
-    // Formato Uber e 99 Pop tradicional: "3 min (0.8 km)" ou "8 min (3,2 km)"
+    // Formato Uber e 99 Pop tradicional: "3 min (0.8 km)" ou "8 min (3,2 km)" ou "1 h 5 min (42.1 km)"
     private val stepOutsideParenPattern: Pattern = Pattern.compile(
-        """(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*\(\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)""",
+        """(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*\(\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)""",
         Pattern.CASE_INSENSITIVE
     )
 
     // Formato 99 Negocia / Solicitações: "(3 min 1 km)" ou "(19 min 9,2 km)"
     private val stepInsideParenPattern: Pattern = Pattern.compile(
-        """\(\s*(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s+(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)""",
+        """\(\s*(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s+(\d{1,4}(?:[.,]\d{1,2})?)\s*(km|m)\s*\)""",
         Pattern.CASE_INSENSITIVE
     )
 
     // Linha de resumo da Uber: "15 min • 5.4 km • Est. de R$1,91/km"
     private val uberSummaryPattern: Pattern = Pattern.compile(
-        """(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*[•·\-]\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(km|m)\b""",
+        """(?:(\d{1,2})\s*h(?:oras?)?\s*)?(\d{1,3})\s*min(?:utos?)?\s*[•·\-]\s*(\d{1,4}(?:[.,]\d{1,2})?)\s*(km|m)\b""",
         Pattern.CASE_INSENSITIVE
     )
+
+    // Pacotes de sistema ou apps comuns que NUNCA devem ser lidos se não houver sobreposição da Uber/99
+    private val ignoredPackages = setOf(
+        "com.uberprofit.auto",
+        "com.whatsapp",
+        "com.whatsapp.w4b",
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.google.android.youtube",
+        "com.nu.production",
+        "br.com.intermedium",
+        "com.itau",
+        "com.bradesco",
+        "com.santander.app",
+        "br.com.bb.android",
+        "br.gov.caixa.tem"
+    )
+
+    fun isIgnoredPackage(packageName: String?): Boolean {
+        if (packageName.isNullOrBlank()) return false
+        return ignoredPackages.contains(packageName.lowercase())
+    }
 
     fun isInsideOwnAppOrHistoryScreen(screenText: String, packageName: String?): Boolean {
         if (packageName == "com.uberprofit.auto") return true
@@ -50,7 +74,9 @@ object RideScreenParser {
             upper.contains("LANÇAR CORRIDA") ||
             upper.contains("TESTAR FUNCIONAMENTO") ||
             upper.contains("SIMULAR CORRIDA") ||
-            upper.contains("DIAGNÓSTICO DO LEITOR")
+            upper.contains("DIAGNÓSTICO DO LEITOR") ||
+            upper.contains("DESLIGAR / PAUSAR LEITOR") ||
+            upper.contains("LIGAR LEITOR")
         ) {
             return true
         }
@@ -63,7 +89,8 @@ object RideScreenParser {
             upper.contains("RESUMO DE GANHOS") ||
             upper.contains("VIAGEM CONCLUÍDA") ||
             upper.contains("CORRIDA FINALIZADA") ||
-            upper.contains("EXTRATO")
+            upper.contains("EXTRATO DE GANHOS") ||
+            upper.contains("ATIVIDADE DE GANHOS")
         ) {
             return true
         }
@@ -100,6 +127,31 @@ object RideScreenParser {
             upper.contains("CANCELAR CORRIDA")
     }
 
+    /**
+     * Junta nós de texto que estão alinhados horizontalmente na mesma linha da tela
+     * (por exemplo, quando a Uber coloca "R$" em um TextView e "22,80" no TextView ao lado).
+     */
+    fun mergeSameRowLines(rawLines: List<ScreenTextLine>): List<ScreenTextLine> {
+        if (rawLines.isEmpty()) return emptyList()
+        val sorted = rawLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
+        val merged = mutableListOf<ScreenTextLine>()
+
+        for (item in sorted) {
+            val last = merged.lastOrNull()
+            if (last != null && abs(item.topY - last.topY) <= 18) {
+                if (!last.text.contains(item.text)) {
+                    merged[merged.lastIndex] = last.copy(
+                        text = "${last.text} ${item.text}".trim(),
+                        height = max(last.height, item.height)
+                    )
+                }
+            } else {
+                merged.add(item)
+            }
+        }
+        return merged
+    }
+
     fun parseRideCard(
         lines: List<ScreenTextLine>,
         packageName: String?,
@@ -107,7 +159,9 @@ object RideScreenParser {
     ): RideOfferPayload? {
         if (lines.isEmpty()) return null
 
-        val fullText = lines.joinToString("\n") { it.text }
+        val mergedLines = mergeSameRowLines(lines)
+        val combinedLines = (mergedLines + lines).distinctBy { "${it.topY}_${it.text}" }
+        val fullText = mergedLines.joinToString("\n") { it.text }
         val lowerFull = fullText.lowercase()
         val pkgLower = (packageName ?: "").lowercase()
 
@@ -118,19 +172,20 @@ object RideScreenParser {
         val is99Card = pkgLower.contains("99") ||
             pkgLower.contains("didi") ||
             isCollapsed99Drawer ||
+            lowerFull.contains("99pop") ||
+            lowerFull.contains("99plus") ||
             lowerFull.contains("99") ||
             lowerFull.contains("pgto") ||
             lowerFull.contains("tarifa base") ||
             lowerFull.contains("cpf verif") ||
             lowerFull.contains("perfil premium") ||
-            lowerFull.contains("corridas") ||
             lowerFull.contains("negocia") ||
             lowerFull.contains("poupa")
 
         val appSource = if (is99Card) "99" else "UBER"
 
         // 1. Extrai a Tarifa Principal em Reais
-        val fare = extractMainFareBRL(lines) ?: return null
+        val fare = extractMainFareBRL(combinedLines, fullText) ?: return null
         if (fare < 4.5 || fare > 950.0) return null
 
         // 2. Extrai Distâncias e Tempos
@@ -141,7 +196,7 @@ object RideScreenParser {
             return null
         }
 
-        if (stepsResult.totalKm < 0.4 || stepsResult.totalMin < 1) {
+        if (stepsResult.totalKm < 0.3 || stepsResult.totalMin < 1) {
             return null
         }
 
@@ -159,7 +214,7 @@ object RideScreenParser {
         )
     }
 
-    private fun extractMainFareBRL(lines: List<ScreenTextLine>): Double? {
+    private fun extractMainFareBRL(lines: List<ScreenTextLine>, fullText: String): Double? {
         val candidates = mutableListOf<Pair<Double, Int>>()
 
         for (line in lines) {
@@ -176,7 +231,8 @@ object RideScreenParser {
                 lower.contains("/km") ||
                 lower.contains("/h") ||
                 lower.contains("lucro") ||
-                lower.contains("comb")
+                lower.contains("comb") ||
+                lower.contains("meta ")
             ) {
                 continue
             }
@@ -187,6 +243,19 @@ object RideScreenParser {
                 val value = rawVal.toDoubleOrNull() ?: continue
                 if (value in 4.5..950.0) {
                     candidates.add(value to max(line.height, 10))
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            // Fallback caso "R$" esteja em uma linha e o número na linha imediatamente seguinte
+            val flatText = fullText.replace("\n", " ")
+            val matcher = pricePattern.matcher(flatText)
+            while (matcher.find()) {
+                val rawVal = matcher.group(1)?.replace(",", ".") ?: continue
+                val value = rawVal.toDoubleOrNull() ?: continue
+                if (value in 4.5..950.0) {
+                    candidates.add(value to 20)
                 }
             }
         }
@@ -238,11 +307,14 @@ object RideScreenParser {
             }
         }
 
-        if (steps.size >= 2) {
-            val pMin = steps[0].first
-            val pKm = steps[0].second
-            val tMin = steps[1].first
-            val tKm = steps[1].second
+        // Remove passos duplicados idênticos na mesma leitura
+        val uniqueSteps = steps.distinct()
+
+        if (uniqueSteps.size >= 2) {
+            val pMin = uniqueSteps[0].first
+            val pKm = uniqueSteps[0].second
+            val tMin = uniqueSteps.drop(1).sumOf { it.first }
+            val tKm = uniqueSteps.drop(1).sumOf { it.second }
             val sumKm = pKm + tKm
             val sumMin = pMin + tMin
 
@@ -254,14 +326,14 @@ object RideScreenParser {
                     pickupMin = pMin,
                     tripMin = max(summaryResult.first - pMin, 1),
                     totalMin = summaryResult.first,
-                    stepCount = 2
+                    stepCount = uniqueSteps.size
                 )
             }
-            return StepsResult(pKm, tKm, sumKm, pMin, tMin, sumMin, 2)
+            return StepsResult(pKm, tKm, sumKm, pMin, tMin, sumMin, uniqueSteps.size)
         }
 
         if (summaryResult != null) {
-            val firstStep = steps.firstOrNull()
+            val firstStep = uniqueSteps.firstOrNull()
             if (firstStep != null && summaryResult.second > firstStep.second) {
                 val tripKm = summaryResult.second - firstStep.second
                 val tripMin = max(summaryResult.first - firstStep.first, 1)
@@ -278,7 +350,7 @@ object RideScreenParser {
             return StepsResult(0.0, summaryResult.second, summaryResult.second, 0, summaryResult.first, summaryResult.first, 2)
         }
 
-        val onlyStep = steps.firstOrNull()
+        val onlyStep = uniqueSteps.firstOrNull()
         if (onlyStep != null) {
             return StepsResult(0.0, onlyStep.second, onlyStep.second, 0, onlyStep.first, onlyStep.first, 1)
         }

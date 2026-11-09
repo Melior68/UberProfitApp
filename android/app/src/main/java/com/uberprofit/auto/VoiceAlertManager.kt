@@ -5,6 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
@@ -15,6 +17,7 @@ class VoiceAlertManager(context: Context) {
 
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private var focusRequest: AudioFocusRequest? = null
@@ -47,8 +50,8 @@ class VoiceAlertManager(context: Context) {
     fun announce(analysis: RideAnalysis, settings: DriverSettings) {
         if (!settings.voiceAlertsEnabled) return
 
-        // 1. Toca bipe imediato de acordo com o veredito
-        playVerdictBeep(analysis.verdict)
+        // 1. Toca bipe imediato e libera o recurso nativo após 260ms (evita vazamento de AudioTrack!)
+        playVerdictBeepSafe(analysis.verdict)
 
         // 2. Se o motorista escolheu "Falar Só Boas/Atenção", nas recusadas toca apenas o bipe curto
         if (settings.voiceSpeechStyle == VoiceSpeechStyle.GOOD_ONLY &&
@@ -67,15 +70,21 @@ class VoiceAlertManager(context: Context) {
         tts?.speak(phrase, TextToSpeech.QUEUE_FLUSH, null, "UBER_PROFIT_UTTERANCE")
     }
 
-    private fun playVerdictBeep(verdict: RideVerdict) {
+    private fun playVerdictBeepSafe(verdict: RideVerdict) {
         try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 95)
+            val toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 95)
             val toneType = when (verdict) {
                 RideVerdict.APPROVED -> ToneGenerator.TONE_PROP_ACK
                 RideVerdict.WARNING -> ToneGenerator.TONE_PROP_BEEP
                 RideVerdict.REJECTED -> ToneGenerator.TONE_PROP_NACK
             }
-            toneGen.startTone(toneType, 210)
+            toneGen.startTone(toneType, 200)
+            mainHandler.postDelayed({
+                try {
+                    toneGen.release()
+                } catch (_: Exception) {
+                }
+            }, 280L)
         } catch (_: Exception) {
         }
     }

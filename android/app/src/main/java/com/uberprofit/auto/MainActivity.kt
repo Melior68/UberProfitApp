@@ -69,9 +69,9 @@ class MainActivity : ComponentActivity() {
             val darkColorScheme = darkColorScheme(
                 primary = Color(0xFF3B82F6),
                 secondary = Color(0xFF10B981),
-                background = Color(0xFF0F141C),
-                surface = Color(0xFF1B2230),
-                surfaceVariant = Color(0xFF252E40)
+                background = Color(0xFF0B0F17),
+                surface = Color(0xFF161E2E),
+                surfaceVariant = Color(0xFF222D42)
             )
             MaterialTheme(colorScheme = darkColorScheme) {
                 Surface(
@@ -155,11 +155,26 @@ fun UberProfitMainScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Uber & 99 Profit Auto",
-                        fontWeight = FontWeight.Black,
-                        fontSize = 19.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when {
+                                        !isAccessibilityActive -> Color(0xFFF59E0B)
+                                        !settings.isShiftReadingEnabled -> Color(0xFFEF4444)
+                                        else -> Color(0xFF10B981)
+                                    }
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Uber & 99 Profit Auto",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 18.5.sp
+                        )
+                    }
                 },
                 actions = {
                     IconButton(onClick = {
@@ -175,13 +190,13 @@ fun UberProfitMainScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF161D29),
+                    containerColor = Color(0xFF121824),
                     titleContentColor = Color.White,
                     actionIconContentColor = Color(0xFF60A5FA)
                 )
             )
         },
-        containerColor = Color(0xFF0F141C)
+        containerColor = Color(0xFF0B0F17)
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -264,7 +279,7 @@ private fun CategoryTabBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF161D29))
+            .background(Color(0xFF121824))
             .padding(horizontal = 8.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -406,7 +421,7 @@ private fun QuickHowItWorksCard(onClose: () -> Unit) {
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = "Como Funciona no Android (3 Passos)",
+                text = "Como Usar no Dia a Dia (3 Passos)",
                 color = Color(0xFF60A5FA),
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp,
@@ -425,17 +440,17 @@ private fun QuickHowItWorksCard(onClose: () -> Unit) {
         }
 
         Text(
-            text = "1. Toque em \"1. Ativar Leitor\" abaixo e ligue a Acessibilidade do Uber & 99 Profit.",
+            text = "1. Toque em \"1. Autorizar App\" uma única vez e ligue a Acessibilidade do Uber & 99 Profit.",
             color = Color.White.copy(alpha = 0.92f),
             fontSize = 12.sp
         )
         Text(
-            text = "2. Toque em \"2. Janela Flutuante\" para abrir o card arrastável por cima da Uber e 99.",
+            text = "2. Quando for rodar, deixe o botão \"LIGAR LEITOR\" ativo. Uma Pílula Compacta discreta ficará no topo e só se abrirá quando tocar corrida!",
             color = Color.White.copy(alpha = 0.92f),
             fontSize = 12.sp
         )
         Text(
-            text = "3. Aceitou a corrida? Ela vai direto para a aba \"Ganhos\" (automático ou 1 toque)!",
+            text = "3. Parou de trabalhar? Toque no botão \"⏸\" da pílula ou em \"DESLIGAR LEITOR\" para pausar tudo.",
             color = Color.White.copy(alpha = 0.92f),
             fontSize = 12.sp
         )
@@ -483,7 +498,7 @@ private fun LivePreviewSection(
             Text(
                 text = when {
                     !isAccessibilityActive -> "Permissão Pendente"
-                    !settings.isShiftReadingEnabled -> "Leitor Desligado (Pausado)"
+                    !settings.isShiftReadingEnabled -> "Leitor Pausado"
                     else -> "Leitor Ativo"
                 },
                 color = when {
@@ -497,22 +512,22 @@ private fun LivePreviewSection(
         }
 
         val bgColor = when (analysis?.verdict) {
-            RideVerdict.APPROVED -> Color(0xFF0F8F3D)
-            RideVerdict.WARNING -> Color(0xFFC78505)
-            RideVerdict.REJECTED -> Color(0xFFB81924)
-            null -> Color(0xFF141923)
+            RideVerdict.APPROVED -> Color(0xFF059669)
+            RideVerdict.WARNING -> Color(0xFFD97706)
+            RideVerdict.REJECTED -> Color(0xFFDC2626)
+            null -> Color(0xFF141C2B)
         }
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(155.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .height(158.dp)
+                .clip(RoundedCornerShape(18.dp))
                 .background(bgColor)
                 .border(
                     width = 2.dp,
-                    color = if (isAccessibilityActive && settings.isShiftReadingEnabled) Color(0xFF10B981).copy(alpha = 0.6f) else Color.White.copy(alpha = 0.14f),
-                    shape = RoundedCornerShape(16.dp)
+                    color = if (isAccessibilityActive && settings.isShiftReadingEnabled) Color(0xFF10B981).copy(alpha = 0.65f) else Color.White.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(18.dp)
                 )
                 .padding(14.dp),
             contentAlignment = Alignment.Center
@@ -520,6 +535,17 @@ private fun LivePreviewSection(
             if (analysis != null) {
                 val shownKm = if (settings.primaryMetricDisplay == PrimaryMetricDisplay.NET) analysis.netPerKm else analysis.grossPerKm
                 val shownHour = if (settings.primaryMetricDisplay == PrimaryMetricDisplay.NET) analysis.netPerHour else analysis.grossPerHour
+
+                val distDetail = if (analysis.offer.pickupDistanceKm > 0.05 && analysis.offer.tripDistanceKm > 0.05) {
+                    String.format(
+                        Locale("pt", "BR"),
+                        "Busca %.1f + Viagem %.1f km",
+                        analysis.offer.pickupDistanceKm,
+                        analysis.offer.tripDistanceKm
+                    )
+                } else {
+                    String.format(Locale("pt", "BR"), "%.1f km total", analysis.offer.totalDistanceKm)
+                }
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -533,7 +559,7 @@ private fun LivePreviewSection(
                         fontSize = 13.5.sp,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Black.copy(alpha = 0.28f))
+                            .background(Color.Black.copy(alpha = 0.30f))
                             .padding(horizontal = 12.dp, vertical = 4.dp)
                     )
 
@@ -561,15 +587,15 @@ private fun LivePreviewSection(
                     Text(
                         text = String.format(
                             Locale("pt", "BR"),
-                            "Tarifa %s • %.1f km total • %d min • Comb. -%s",
+                            "Tarifa %s • %s (%d min) • Comb. -%s",
                             formatBRL(analysis.offer.fareBRL),
-                            analysis.offer.totalDistanceKm,
+                            distDetail,
                             analysis.offer.totalMinutes,
                             formatBRL(analysis.fuelCostBRL)
                         ),
-                        color = Color.White.copy(alpha = 0.95f),
+                        color = Color.White.copy(alpha = 0.96f),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
+                        fontSize = 11.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -583,7 +609,7 @@ private fun LivePreviewSection(
                         text = "⏸️ LEITOR DESLIGADO (FORA DE TURNO)",
                         color = Color(0xFFF87171),
                         fontWeight = FontWeight.Black,
-                        fontSize = 17.sp,
+                        fontSize = 16.5.sp,
                         textAlign = TextAlign.Center
                     )
                     Text(
@@ -599,15 +625,22 @@ private fun LivePreviewSection(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "UBER & 99 PROFIT ATIVO",
+                        text = "🟢 UBER & 99 PROFIT ATIVO",
                         color = Color.White,
                         fontWeight = FontWeight.Black,
-                        fontSize = 20.sp
+                        fontSize = 19.sp
                     )
                     Text(
-                        text = "Monitorando ofertas da Uber e 99 em tempo real...",
+                        text = "Monitorando Uber e 99 • Meta ${formatBRL(settings.targetBRLPerKm)}/km e R$ ${settings.targetBRLPerHour.toInt()}/h",
+                        color = Color(0xFF10B981),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "A Pílula Flutuante fica discreta no mapa e se abre sozinha quando tocar corrida!",
                         color = Color(0xFF9CA3AF),
-                        fontSize = 13.sp,
+                        fontSize = 11.5.sp,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -626,7 +659,7 @@ private fun QuickAcceptLastRideBar(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -640,7 +673,7 @@ private fun QuickAcceptLastRideBar(
             Text(
                 text = String.format(
                     Locale("pt", "BR"),
-                    "%.1f km • %d min • Lucro %s",
+                    "%.1f km (%d min) • Lucro Livre %s",
                     item.offer.totalDistanceKm,
                     item.offer.totalMinutes,
                     formatBRL(item.netProfitBRL)
@@ -695,17 +728,17 @@ private fun ShiftControlsSection(
             onClick = { AppStateRepository.toggleShiftReading(context) },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(60.dp),
+                .height(62.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (settings.isShiftReadingEnabled) Color(0xFFDC2626) else Color(0xFF10B981)
+                containerColor = if (settings.isShiftReadingEnabled) Color(0xFFDC2626) else Color(0xFF059669)
             )
         ) {
             Icon(
                 imageVector = if (settings.isShiftReadingEnabled) Icons.Default.PauseCircleFilled else Icons.Default.PlayCircleFilled,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(26.dp)
+                modifier = Modifier.size(28.dp)
             )
             Spacer(modifier = Modifier.width(10.dp))
             Column(horizontalAlignment = Alignment.Start) {
@@ -717,11 +750,11 @@ private fun ShiftControlsSection(
                 )
                 Text(
                     text = if (settings.isShiftReadingEnabled) {
-                        "Leitor está ATIVO agora • Toque aqui quando parar de rodar"
+                        "Leitor ATIVO • Toque aqui quando parar de trabalhar"
                     } else {
-                        "Leitor está DESLIGADO • Toque aqui para começar a ler Uber/99"
+                        "Leitor PAUSADO • Toque aqui para monitorar Uber e 99"
                     },
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = Color.White.copy(alpha = 0.92f),
                     fontSize = 11.sp
                 )
             }
@@ -736,7 +769,7 @@ private fun ShiftControlsSection(
                 onClick = onOpenAccessibilitySettings,
                 modifier = Modifier
                     .weight(1f)
-                    .height(54.dp),
+                    .height(56.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isAccessibilityActive) Color(0xFF1F2937) else Color(0xFF2563EB)
@@ -757,8 +790,8 @@ private fun ShiftControlsSection(
                         fontSize = 12.5.sp
                     )
                     Text(
-                        text = if (isAccessibilityActive) "Acessibilidade ligada" else "Fazer 1 única vez",
-                        color = Color.White.copy(alpha = 0.75f),
+                        text = if (isAccessibilityActive) "Acessibilidade ativa" else "Fazer 1 única vez",
+                        color = Color.White.copy(alpha = 0.78f),
                         fontSize = 10.sp
                     )
                 }
@@ -770,10 +803,10 @@ private fun ShiftControlsSection(
                     onClick = onToggleOrRequestOverlay,
                     modifier = Modifier
                         .weight(1f)
-                        .height(58.dp),
+                        .height(56.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isOverlayActive) Color(0xFFD97706) else Color(0xFF10B981)
+                        containerColor = if (isOverlayActive) Color(0xFFD97706) else Color(0xFF059669)
                     ),
                     contentPadding = PaddingValues(horizontal = 10.dp)
                 ) {
@@ -785,15 +818,15 @@ private fun ShiftControlsSection(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column(horizontalAlignment = Alignment.Start) {
                         Text(
-                            text = if (isOverlayActive) "Flutuante Ativa" else "2. Abrir Flutuante",
+                            text = if (isOverlayActive) "Pílula Ativa" else "2. Abrir Pílula",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.5.sp
                         )
                         Text(
-                            text = if (isOverlayActive) "Toque p/ fechar" else "Card sobre o mapa",
+                            text = if (isOverlayActive) "Toque p/ ocultar" else "Flutuante no mapa",
                             color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 10.5.sp
+                            fontSize = 10.sp
                         )
                     }
                 }
@@ -802,7 +835,7 @@ private fun ShiftControlsSection(
                     onClick = onNavigateToCustomize,
                     modifier = Modifier
                         .weight(1f)
-                        .height(58.dp),
+                        .height(56.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
                     contentPadding = PaddingValues(horizontal = 10.dp)
@@ -818,12 +851,12 @@ private fun ShiftControlsSection(
                             text = "Só Notificação",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.5.sp
                         )
                         Text(
                             text = "Toque p/ mudar",
                             color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 10.5.sp
+                            fontSize = 10.sp
                         )
                     }
                 }
@@ -850,14 +883,14 @@ private fun ShiftControlsSection(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Apareceu \"Configuração Restrita\" no Android 13/14?",
+                        text = "Apareceu \"Acesso negado / Permissão restrita\"?",
                         color = Color(0xFFF59E0B),
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
                     )
                     Text(
-                        text = "Toque aqui → depois nos 3 pontinhos (⋮) no topo → \"Permitir configurações restritas\".",
-                        color = Color.White.copy(alpha = 0.9f),
+                        text = "1. Toque aqui → 2. Toque nos 3 pontinhos (⋮) no canto superior direito → 3. \"Permitir configurações restritas\".",
+                        color = Color.White.copy(alpha = 0.92f),
                         fontSize = 11.sp
                     )
                 }
@@ -868,27 +901,28 @@ private fun ShiftControlsSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF1B2230))
+                .background(Color(0xFF161E2E))
                 .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = Icons.Default.Shield,
+                imageVector = Icons.Default.VolumeUp,
                 contentDescription = null,
-                tint = Color(0xFF10B981),
-                modifier = Modifier.size(16.dp)
+                tint = if (settings.voiceAlertsEnabled) Color(0xFF10B981) else Color(0xFF9CA3AF),
+                modifier = Modifier.size(18.dp)
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "2º Plano Sempre Ativo",
-                color = Color(0xFF10B981),
+                text = "Aviso por Voz em Português",
+                color = Color.White,
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
+                fontSize = 12.5.sp,
                 modifier = Modifier.weight(1f)
             )
             Text(
-                text = if (settings.voiceAlertsEnabled) "Voz Ligada" else "Mudo",
-                color = Color(0xFF9CA3AF),
+                text = if (settings.voiceAlertsEnabled) "Ligada" else "Mudo",
+                color = if (settings.voiceAlertsEnabled) Color(0xFF10B981) else Color(0xFF9CA3AF),
+                fontWeight = FontWeight.Bold,
                 fontSize = 12.sp
             )
             Spacer(modifier = Modifier.width(8.dp))
@@ -918,7 +952,7 @@ private fun ShiftStatsSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Resumo das Ofertas Recebidas Hoje",
+                text = "Resumo das Ofertas Lidas Hoje",
                 color = Color(0xFF9CA3AF),
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp,
@@ -955,7 +989,7 @@ private fun StatBadge(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -979,39 +1013,38 @@ private fun TestSimulationSection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Testar Funcionamento Agora",
+            text = "Simular Corrida Agora (Testar Voz + Pílula Flutuante)",
             color = Color(0xFF9CA3AF),
             fontWeight = FontWeight.Bold,
             fontSize = 12.sp
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = {
                     onSimulateOffer(
                         RideOfferPayload(
                             appSource = "UBER",
-                            fareBRL = 22.80,
+                            fareBRL = 24.50,
                             pickupDistanceKm = 0.8,
                             tripDistanceKm = 7.2,
                             totalDistanceKm = 8.0,
                             pickupMinutes = 3,
-                            tripMinutes = 15,
-                            totalMinutes = 18,
-                            rawRecognizedText = "UberX Exclusivo\nR$ 22,80\n18 min • 8.0 km • Est. de R$2,85/km\n3 min (0.8 km)\n15 minutos (7.2 km)\nAceitar",
+                            tripMinutes = 14,
+                            totalMinutes = 17,
+                            rawRecognizedText = "UberX Exclusivo\nR$ 24,50\n3 min (0.8 km)\n14 minutos (7.2 km)\nAceitar",
                             timestamp = System.currentTimeMillis() / 1000.0
                         )
                     )
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 6.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Simular Corrida Boa", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("🟢 Boa", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
 
             Button(
@@ -1019,25 +1052,49 @@ private fun TestSimulationSection(
                     onSimulateOffer(
                         RideOfferPayload(
                             appSource = "99",
-                            fareBRL = 10.32,
-                            pickupDistanceKm = 1.4,
-                            tripDistanceKm = 6.6,
+                            fareBRL = 16.20,
+                            pickupDistanceKm = 1.2,
+                            tripDistanceKm = 6.8,
                             totalDistanceKm = 8.0,
-                            pickupMinutes = 5,
-                            tripMinutes = 18,
-                            totalMinutes = 23,
-                            rawRecognizedText = "99Pop\nR$ 10,32\n5 min (1.4 km)\n18 min (6.6 km)\nAceitar",
+                            pickupMinutes = 4,
+                            tripMinutes = 16,
+                            totalMinutes = 20,
+                            rawRecognizedText = "99Pop\nR$ 16,20\n4 min (1.2 km)\n16 min (6.8 km)\nAceitar",
                             timestamp = System.currentTimeMillis() / 1000.0
                         )
                     )
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 6.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Simular Corrida Ruim", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("🟡 Média", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = {
+                    onSimulateOffer(
+                        RideOfferPayload(
+                            appSource = "99",
+                            fareBRL = 10.30,
+                            pickupDistanceKm = 1.8,
+                            tripDistanceKm = 6.2,
+                            totalDistanceKm = 8.0,
+                            pickupMinutes = 5,
+                            tripMinutes = 18,
+                            totalMinutes = 23,
+                            rawRecognizedText = "99Pop\nR$ 10,30\n5 min (1.8 km)\n18 min (6.2 km)\nAceitar",
+                            timestamp = System.currentTimeMillis() / 1000.0
+                        )
+                    )
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 6.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("🔴 Ruim", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1081,7 +1138,7 @@ private fun EarningsTabView(
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.linearGradient(
-                    colors = listOf(Color(0xFF0D8540), Color(0xFF0A5C32))
+                    colors = listOf(Color(0xFF059669), Color(0xFF065F46))
                 )
             )
             .padding(16.dp),
@@ -1100,7 +1157,7 @@ private fun EarningsTabView(
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "GANHOS DO TURNO",
-                color = Color.White.copy(alpha = 0.9f),
+                color = Color.White.copy(alpha = 0.92f),
                 fontWeight = FontWeight.Black,
                 fontSize = 12.sp,
                 modifier = Modifier.weight(1f)
@@ -1108,7 +1165,7 @@ private fun EarningsTabView(
             Box(
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.2f))
+                    .background(Color.White.copy(alpha = 0.22f))
                     .padding(horizontal = 10.dp, vertical = 3.dp)
             ) {
                 Text(
@@ -1134,7 +1191,7 @@ private fun EarningsTabView(
                 text = formatBRL(totalNetProfitBRL),
                 color = Color.White,
                 fontWeight = FontWeight.Black,
-                fontSize = 34.sp
+                fontSize = 35.sp
             )
         }
 
@@ -1211,16 +1268,46 @@ private fun EarningsTabView(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            text = "Resumo de KM Rodados, Tempo e Médias",
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Resumo de KM Rodados, Tempo e Médias",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.5.sp,
+                modifier = Modifier.weight(1f)
+            )
+            if (acceptedRides.isNotEmpty()) {
+                Text(
+                    text = "📤 Compartilhar",
+                    color = Color(0xFF60A5FA),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable {
+                        shareShiftReport(
+                            context = context,
+                            ridesCount = acceptedRides.size,
+                            uberCount = uberCount,
+                            ninenineCount = ninenineCount,
+                            grossBRL = totalGrossBRL,
+                            fuelBRL = totalFuelCostBRL,
+                            extraBRL = settings.extraDailyExpenseBRL,
+                            netBRL = totalNetProfitBRL,
+                            totalKm = totalKm,
+                            totalMinutes = totalMinutes,
+                            avgGrossKm = avgGrossPerKm,
+                            avgNetKm = avgNetPerKm
+                        )
+                    }
+                )
+            }
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             EarningsMetricBox(
@@ -1266,7 +1353,7 @@ private fun EarningsTabView(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -1287,7 +1374,7 @@ private fun EarningsTabView(
                 Button(
                     onClick = { AppStateRepository.acceptRide(context, lastCandidate) },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1329,35 +1416,45 @@ private fun EarningsTabView(
 
         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
-        Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Meta Diária de Lucro Livre", color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text(formatBRL(settings.dailyNetGoalBRL), color = Color(0xFF10B981), fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+        AdjustableMetricSlider(
+            title = "Meta Diária de Lucro Livre",
+            formattedValue = formatBRL(settings.dailyNetGoalBRL),
+            valueColor = Color(0xFF10B981),
+            value = settings.dailyNetGoalBRL.toFloat(),
+            valueRange = 50f..600f,
+            onValueChange = { v ->
+                val stepped = (v / 10f).roundToInt() * 10.0
+                AppStateRepository.updateSettings(context) { it.copy(dailyNetGoalBRL = stepped) }
+            },
+            onStepMinus = {
+                val next = (settings.dailyNetGoalBRL - 10.0).coerceAtLeast(50.0)
+                AppStateRepository.updateSettings(context) { it.copy(dailyNetGoalBRL = next) }
+            },
+            onStepPlus = {
+                val next = (settings.dailyNetGoalBRL + 10.0).coerceAtMost(600.0)
+                AppStateRepository.updateSettings(context) { it.copy(dailyNetGoalBRL = next) }
             }
-            Slider(
-                value = settings.dailyNetGoalBRL.toFloat(),
-                onValueChange = { v ->
-                    val stepped = (v / 10f).roundToInt() * 10.0
-                    AppStateRepository.updateSettings(context) { it.copy(dailyNetGoalBRL = stepped) }
-                },
-                valueRange = 50f..600f
-            )
-        }
+        )
 
-        Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Gasto Extra Hoje (Lanche / Aluguel / Lavagem)", color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text(formatBRL(settings.extraDailyExpenseBRL), color = Color(0xFFF59E0B), fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+        AdjustableMetricSlider(
+            title = "Gasto Extra Hoje (Lanche / Aluguel / Lavagem)",
+            formattedValue = formatBRL(settings.extraDailyExpenseBRL),
+            valueColor = Color(0xFFF59E0B),
+            value = settings.extraDailyExpenseBRL.toFloat(),
+            valueRange = 0f..250f,
+            onValueChange = { v ->
+                val stepped = (v / 5f).roundToInt() * 5.0
+                AppStateRepository.updateSettings(context) { it.copy(extraDailyExpenseBRL = stepped) }
+            },
+            onStepMinus = {
+                val next = (settings.extraDailyExpenseBRL - 5.0).coerceAtLeast(0.0)
+                AppStateRepository.updateSettings(context) { it.copy(extraDailyExpenseBRL = next) }
+            },
+            onStepPlus = {
+                val next = (settings.extraDailyExpenseBRL + 5.0).coerceAtMost(250.0)
+                AppStateRepository.updateSettings(context) { it.copy(extraDailyExpenseBRL = next) }
             }
-            Slider(
-                value = settings.extraDailyExpenseBRL.toFloat(),
-                onValueChange = { v ->
-                    val stepped = (v / 5f).roundToInt() * 5.0
-                    AppStateRepository.updateSettings(context) { it.copy(extraDailyExpenseBRL = stepped) }
-                },
-                valueRange = 0f..250f
-            )
-        }
+        )
     }
 
     // 4. Lista de Corridas Aceitas no Turno
@@ -1391,7 +1488,7 @@ private fun EarningsTabView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1B2230))
+                    .background(Color(0xFF161E2E))
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1421,7 +1518,7 @@ private fun EarningsTabView(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1B2230))
+                        .background(Color(0xFF161E2E))
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1523,7 +1620,7 @@ private fun EarningsMetricBox(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF252E40))
+            .background(Color(0xFF222D42))
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
@@ -1537,7 +1634,7 @@ private fun EarningsMetricBox(
     }
 }
 
-// MARK: - ABA 3: METAS & CARRO
+// MARK: - ABA 3: METAS & CARRO (COM BOTÕES '-' E '+' DE AJUSTE FINO)
 @Composable
 private fun GoalsAndVehicleTabView(settings: DriverSettings) {
     val context = LocalContext.current
@@ -1546,60 +1643,62 @@ private fun GoalsAndVehicleTabView(settings: DriverSettings) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Suas Metas Mínimas", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
 
-        Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Meta Mínima por KM", color = Color.White, modifier = Modifier.weight(1f))
-                Text(
-                    text = "${formatBRL(settings.targetBRLPerKm)} / km",
-                    color = Color(0xFF10B981),
-                    fontWeight = FontWeight.Bold
-                )
+        AdjustableMetricSlider(
+            title = "Meta Mínima por KM",
+            formattedValue = "${formatBRL(settings.targetBRLPerKm)}/km",
+            valueColor = Color(0xFF10B981),
+            value = settings.targetBRLPerKm.toFloat(),
+            valueRange = 1.00f..5.00f,
+            onValueChange = { v ->
+                val stepped = (v * 20f).roundToInt() / 20.0
+                AppStateRepository.updateSettings(context) { it.copy(targetBRLPerKm = stepped) }
+            },
+            onStepMinus = {
+                val next = ((settings.targetBRLPerKm - 0.05) * 20.0).roundToInt() / 20.0
+                AppStateRepository.updateSettings(context) { it.copy(targetBRLPerKm = next.coerceAtLeast(1.0)) }
+            },
+            onStepPlus = {
+                val next = ((settings.targetBRLPerKm + 0.05) * 20.0).roundToInt() / 20.0
+                AppStateRepository.updateSettings(context) { it.copy(targetBRLPerKm = next.coerceAtMost(5.0)) }
             }
-            Slider(
-                value = settings.targetBRLPerKm.toFloat(),
-                onValueChange = { v ->
-                    val stepped = (v * 20f).roundToInt() / 20.0
-                    AppStateRepository.updateSettings(context) { it.copy(targetBRLPerKm = stepped) }
-                },
-                valueRange = 1.00f..5.00f
-            )
-        }
+        )
 
         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
-        Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Meta Mínima por Hora", color = Color.White, modifier = Modifier.weight(1f))
-                Text(
-                    text = String.format(Locale("pt", "BR"), "R$ %.0f / h", settings.targetBRLPerHour),
-                    color = Color(0xFF10B981),
-                    fontWeight = FontWeight.Bold
-                )
+        AdjustableMetricSlider(
+            title = "Meta Mínima por Hora",
+            formattedValue = String.format(Locale("pt", "BR"), "R$ %.0f/h", settings.targetBRLPerHour),
+            valueColor = Color(0xFF10B981),
+            value = settings.targetBRLPerHour.toFloat(),
+            valueRange = 20f..120f,
+            onValueChange = { v ->
+                val stepped = (v / 2f).roundToInt() * 2.0
+                AppStateRepository.updateSettings(context) { it.copy(targetBRLPerHour = stepped) }
+            },
+            onStepMinus = {
+                val next = (settings.targetBRLPerHour - 2.0).coerceAtLeast(20.0)
+                AppStateRepository.updateSettings(context) { it.copy(targetBRLPerHour = next) }
+            },
+            onStepPlus = {
+                val next = (settings.targetBRLPerHour + 2.0).coerceAtMost(120.0)
+                AppStateRepository.updateSettings(context) { it.copy(targetBRLPerHour = next) }
             }
-            Slider(
-                value = settings.targetBRLPerHour.toFloat(),
-                onValueChange = { v ->
-                    val stepped = (v / 2f).roundToInt() * 2.0
-                    AppStateRepository.updateSettings(context) { it.copy(targetBRLPerHour = stepped) }
-                },
-                valueRange = 20f..120f
-            )
-        }
+        )
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1619,7 +1718,7 @@ private fun GoalsAndVehicleTabView(settings: DriverSettings) {
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "Gasto: ${formatBRL(settings.fuelCostPerKm)}/km",
+                    text = "Custo: ${formatBRL(settings.fuelCostPerKm)}/km",
                     color = Color(0xFFF59E0B),
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp
@@ -1627,52 +1726,54 @@ private fun GoalsAndVehicleTabView(settings: DriverSettings) {
             }
         }
 
-        Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Consumo do Seu Carro", color = Color.White, modifier = Modifier.weight(1f))
-                Text(
-                    text = String.format(Locale("pt", "BR"), "%.1f km/L", settings.carConsumptionKmPerLiter),
-                    color = Color(0xFF60A5FA),
-                    fontWeight = FontWeight.Bold
-                )
+        AdjustableMetricSlider(
+            title = "Consumo do Seu Carro",
+            formattedValue = String.format(Locale("pt", "BR"), "%.1f km/L", settings.carConsumptionKmPerLiter),
+            valueColor = Color(0xFF60A5FA),
+            value = settings.carConsumptionKmPerLiter.toFloat(),
+            valueRange = 5.0f..22.0f,
+            onValueChange = { v ->
+                val stepped = (v * 2f).roundToInt() / 2.0
+                AppStateRepository.updateSettings(context) { it.copy(carConsumptionKmPerLiter = stepped) }
+            },
+            onStepMinus = {
+                val next = ((settings.carConsumptionKmPerLiter - 0.5) * 2.0).roundToInt() / 2.0
+                AppStateRepository.updateSettings(context) { it.copy(carConsumptionKmPerLiter = next.coerceAtLeast(5.0)) }
+            },
+            onStepPlus = {
+                val next = ((settings.carConsumptionKmPerLiter + 0.5) * 2.0).roundToInt() / 2.0
+                AppStateRepository.updateSettings(context) { it.copy(carConsumptionKmPerLiter = next.coerceAtMost(22.0)) }
             }
-            Slider(
-                value = settings.carConsumptionKmPerLiter.toFloat(),
-                onValueChange = { v ->
-                    val stepped = (v * 2f).roundToInt() / 2.0
-                    AppStateRepository.updateSettings(context) { it.copy(carConsumptionKmPerLiter = stepped) }
-                },
-                valueRange = 5.0f..22.0f
-            )
-        }
+        )
 
         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
-        Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Preço do Litro (Gasolina/Etanol)", color = Color.White, modifier = Modifier.weight(1f))
-                Text(
-                    text = "${formatBRL(settings.fuelPriceBRLPerLiter)} / L",
-                    color = Color(0xFFF59E0B),
-                    fontWeight = FontWeight.Bold
-                )
+        AdjustableMetricSlider(
+            title = "Preço do Litro (Gasolina/Etanol)",
+            formattedValue = "${formatBRL(settings.fuelPriceBRLPerLiter)}/L",
+            valueColor = Color(0xFFF59E0B),
+            value = settings.fuelPriceBRLPerLiter.toFloat(),
+            valueRange = 3.00f..9.00f,
+            onValueChange = { v ->
+                val stepped = (v * 20f).roundToInt() / 20.0
+                AppStateRepository.updateSettings(context) { it.copy(fuelPriceBRLPerLiter = stepped) }
+            },
+            onStepMinus = {
+                val next = ((settings.fuelPriceBRLPerLiter - 0.05) * 20.0).roundToInt() / 20.0
+                AppStateRepository.updateSettings(context) { it.copy(fuelPriceBRLPerLiter = next.coerceAtLeast(3.0)) }
+            },
+            onStepPlus = {
+                val next = ((settings.fuelPriceBRLPerLiter + 0.05) * 20.0).roundToInt() / 20.0
+                AppStateRepository.updateSettings(context) { it.copy(fuelPriceBRLPerLiter = next.coerceAtMost(9.0)) }
             }
-            Slider(
-                value = settings.fuelPriceBRLPerLiter.toFloat(),
-                onValueChange = { v ->
-                    val stepped = (v * 20f).roundToInt() / 20.0
-                    AppStateRepository.updateSettings(context) { it.copy(fuelPriceBRLPerLiter = stepped) }
-                },
-                valueRange = 3.00f..9.00f
-            )
-        }
+        )
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -1714,6 +1815,65 @@ private fun GoalsAndVehicleTabView(settings: DriverSettings) {
     }
 }
 
+@Composable
+private fun AdjustableMetricSlider(
+    title: String,
+    formattedValue: String,
+    valueColor: Color,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onStepMinus: () -> Unit,
+    onStepPlus: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF222D42))
+                    .clickable { onStepMinus() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("-", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
+            }
+            Text(
+                text = formattedValue,
+                color = valueColor,
+                fontWeight = FontWeight.Black,
+                fontSize = 13.5.sp,
+                modifier = Modifier.padding(horizontal = 10.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF222D42))
+                    .clickable { onStepPlus() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("+", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
+            }
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange
+        )
+    }
+}
+
 // MARK: - ABA 4: PERSONALIZAÇÃO DE ALERTAS E VOZ
 @Composable
 private fun CustomizationTabView(settings: DriverSettings) {
@@ -1723,7 +1883,7 @@ private fun CustomizationTabView(settings: DriverSettings) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -1739,7 +1899,7 @@ private fun CustomizationTabView(settings: DriverSettings) {
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (selected) Color(0xFF2563EB) else Color(0xFF252E40))
+                        .background(if (selected) Color(0xFF2563EB) else Color(0xFF222D42))
                         .clickable {
                             AppStateRepository.updateSettings(context) { it.copy(visualAlertMode = mode) }
                         }
@@ -1760,8 +1920,8 @@ private fun CustomizationTabView(settings: DriverSettings) {
         Text(
             text = when (settings.visualAlertMode) {
                 VisualAlertMode.NOTIFICATION -> "• Só Notificação: Não abre janela flutuante. Mostra apenas um Banner rápido no topo quando a corrida toca."
-                VisualAlertMode.PIP -> "• Só Janela Flutuante: Mantém o card colorido arrastável em cima do mapa da Uber/99."
-                VisualAlertMode.BOTH -> "• Ambos: Mantém a janela flutuante e também dispara o Banner no topo."
+                VisualAlertMode.PIP -> "• Só Janela Flutuante: Mantém a Pílula Compacta discreta em cima do mapa, que se expande sozinha quando toca corrida."
+                VisualAlertMode.BOTH -> "• Ambos: Mantém a Pílula Flutuante inteligente e também dispara o Banner no topo."
             },
             color = Color(0xFF9CA3AF),
             fontSize = 12.sp
@@ -1772,7 +1932,7 @@ private fun CustomizationTabView(settings: DriverSettings) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -1788,7 +1948,7 @@ private fun CustomizationTabView(settings: DriverSettings) {
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (selected) Color(0xFF2563EB) else Color(0xFF252E40))
+                        .background(if (selected) Color(0xFF2563EB) else Color(0xFF222D42))
                         .clickable {
                             AppStateRepository.updateSettings(context) { it.copy(primaryMetricDisplay = mode) }
                         }
@@ -1821,7 +1981,7 @@ private fun CustomizationTabView(settings: DriverSettings) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF161E2E))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -1856,7 +2016,7 @@ private fun CustomizationTabView(settings: DriverSettings) {
                         .clip(RoundedCornerShape(10.dp))
                         .background(
                             if (isSelected) Color(0xFF3B82F6).copy(alpha = 0.16f)
-                            else Color(0xFF252E40)
+                            else Color(0xFF222D42)
                         )
                         .clickable {
                             AppStateRepository.updateSettings(context) { it.copy(voiceSpeechStyle = style) }
@@ -1965,7 +2125,7 @@ private fun HistoryTabView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF1B2230))
+                    .background(Color(0xFF161E2E))
                     .clickable { onInspectOCR(item) }
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2028,7 +2188,7 @@ private fun HistoryTabView(
                         onClick = { AppStateRepository.acceptRide(context, item) },
                         enabled = !accepted,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF10B981),
+                            containerColor = Color(0xFF059669),
                             disabledContainerColor = Color(0xFF10B981).copy(alpha = 0.2f)
                         ),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -2068,18 +2228,18 @@ private fun AddManualRideDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("UBER", "99", "EXTRA").forEach { app ->
+                    listOf("UBER", "99", "PARTICULAR").forEach { app ->
                         val isSel = selectedApp == app
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) Color(0xFF2563EB) else Color(0xFF252E40))
+                                .background(if (isSel) Color(0xFF2563EB) else Color(0xFF222D42))
                                 .clickable { selectedApp = app }
                                 .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(app, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(app, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                         }
                     }
                 }
@@ -2169,7 +2329,7 @@ private fun OCRDebugDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF0F141C))
+                        .background(Color(0xFF0B0F17))
                         .padding(12.dp)
                 ) {
                     Text(
@@ -2189,7 +2349,48 @@ private fun OCRDebugDialog(
     )
 }
 
-// MARK: - FORMATADORES AUXILIARES
+// MARK: - COMPARTILHAMENTO E FORMATADORES AUXILIARES
+private fun shareShiftReport(
+    context: Context,
+    ridesCount: Int,
+    uberCount: Int,
+    ninenineCount: Int,
+    grossBRL: Double,
+    fuelBRL: Double,
+    extraBRL: Double,
+    netBRL: Double,
+    totalKm: Double,
+    totalMinutes: Int,
+    avgGrossKm: Double,
+    avgNetKm: Double
+) {
+    val dateStr = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")).format(Date())
+    val report = buildString {
+        appendLine("📊 *RESUMO DO TURNO ($dateStr) — Uber & 99 Profit*")
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("💰 *Lucro Livre no Bolso:* ${formatBRL(netBRL)}")
+        appendLine("💵 *Ganho Bruto:* ${formatBRL(grossBRL)}")
+        appendLine("⛽ *Combustível:* -${formatBRL(fuelBRL)}")
+        if (extraBRL > 0) {
+            appendLine("🍔 *Gasto Extra:* -${formatBRL(extraBRL)}")
+        }
+        appendLine("━━━━━━━━━━━━━━━━━━━━")
+        appendLine("🚗 *Corridas:* $ridesCount (Uber: $uberCount • 99: $ninenineCount)")
+        appendLine("🛣️ *KM Total:* ${String.format(Locale("pt", "BR"), "%.1f km", totalKm)}")
+        appendLine("⏱️ *Tempo em Viagens:* ${formatDuration(totalMinutes)}")
+        appendLine("📈 *Média Bruta:* ${formatBRL(avgGrossKm)}/km")
+        appendLine("✅ *Média Livre:* ${formatBRL(avgNetKm)}/km")
+    }
+    try {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, report)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Compartilhar Resumo do Turno"))
+    } catch (_: Exception) {
+    }
+}
+
 private fun formatBRL(value: Double): String {
     return String.format(Locale("pt", "BR"), "R$ %.2f", value)
 }

@@ -33,15 +33,26 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private var didSendClearCard: Boolean = true
     private var didSendAcceptedForLastOffer: Boolean = true
 
-    // Janela Flutuante Nativa (TYPE_ACCESSIBILITY_OVERLAY — não exige permissão extra SYSTEM_ALERT_WINDOW!)
+    // Timer automático para recolher o card de volta para a Pílula Compacta após 8,5s sem oferta na tela
+    private val autoClearRunnable = Runnable {
+        val nowSec = System.currentTimeMillis() / 1000.0
+        if (!didSendClearCard && (nowSec - lastValidOfferSeenTimeSec) >= 8.0) {
+            didSendClearCard = true
+            AppStateRepository.clearActiveCard(this@UberProfitAccessibilityService)
+        }
+    }
+
+    // Janela Flutuante Nativa (TYPE_ACCESSIBILITY_OVERLAY — 100% imune a bloqueios do Play Protect)
     private var windowManager: WindowManager? = null
     private var rootContainer: LinearLayout? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var headerBadgeView: TextView? = null
+    private var acceptButtonView: TextView? = null
+    private var pauseButtonView: TextView? = null
+    private var metricsRowContainer: LinearLayout? = null
     private var kmMetricView: TextView? = null
     private var hourMetricView: TextView? = null
     private var footerDetailsView: TextView? = null
-    private var acceptButtonView: TextView? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -55,6 +66,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
+        mainHandler.removeCallbacks(autoClearRunnable)
         removeFloatingViewInternal()
         activeInstance = null
         AppStateRepository.setAccessibilityConnected(false)
@@ -63,6 +75,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(autoClearRunnable)
         removeFloatingViewInternal()
         activeInstance = null
         AppStateRepository.setAccessibilityConnected(false)
@@ -78,6 +91,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
         val pkgName = event.packageName?.toString()
         if (pkgName == packageName) return
+        if (RideScreenParser.isIgnoredPackage(pkgName)) return
 
         val nowSec = System.currentTimeMillis() / 1000.0
 
@@ -95,43 +109,58 @@ class UberProfitAccessibilityService : AccessibilityService() {
             ) {
                 didSendAcceptedForLastOffer = true
                 didSendClearCard = true
+                mainHandler.removeCallbacks(autoClearRunnable)
                 AppStateRepository.onAutoDetectedRideAccepted(this)
                 return
             }
         }
 
-        // Throttle de 300ms
+        // Throttle de 280ms para economia de bateria e CPU fria
         val nowMillis = System.currentTimeMillis()
-        if (nowMillis - lastProcessedMillis < 300L) return
+        if (nowMillis - lastProcessedMillis < 280L) return
         lastProcessedMillis = nowMillis
 
-        val rootNode = rootInActiveWindow ?: return
-        val collectedLines = mutableListOf<ScreenTextLine>()
-        collectTextLines(rootNode, collectedLines)
+        // 2. Varre a janela ativa principal e, se necessário, janelas interativas sobrepostas (ex: card da Uber/99 sobre o Waze/Maps)
+        var detectedPayload: RideOfferPayload? = null
+        var activeScreenText = ""
 
-        if (collectedLines.isEmpty()) {
-            checkAndClearStaleCard(nowSec)
-            return
+        val primaryRoot = rootInActiveWindow
+        if (primaryRoot != null) {
+            val res = inspectWindowNode(primaryRoot, pkgName, nowSec)
+            detectedPayload = res.first
+            activeScreenText = res.second
         }
 
-        val sortedLines = collectedLines.sortedBy { it.topY }
-        val allScreenText = sortedLines.joinToString("\n") { it.text }
-
-        if (RideScreenParser.isInsideOwnAppOrHistoryScreen(allScreenText, pkgName)) {
-            return
+        if (detectedPayload == null) {
+            try {
+                val interactiveWindows = windows
+                if (interactiveWindows != null) {
+                    for (win in interactiveWindows) {
+                        val winRoot = win.root ?: continue
+                        val winPkg = winRoot.packageName?.toString()
+                        if (winPkg == packageName || RideScreenParser.isIgnoredPackage(winPkg)) continue
+                        val res = inspectWindowNode(winRoot, winPkg, nowSec)
+                        if (res.first != null) {
+                            detectedPayload = res.first
+                            activeScreenText = res.second
+                            break
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
         }
 
-        val cleanCardLines = sortedLines.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
-        val payload = RideScreenParser.parseRideCard(cleanCardLines, pkgName, nowSec)
-
-        if (payload == null) {
+        if (detectedPayload == null) {
             if (!didSendAcceptedForLastOffer &&
                 lastValidOfferSeenTimeSec > 0 &&
                 (nowSec - lastValidOfferSeenTimeSec) <= 22.0 &&
-                RideScreenParser.isAcceptedTripScreen(allScreenText)
+                activeScreenText.isNotEmpty() &&
+                RideScreenParser.isAcceptedTripScreen(activeScreenText)
             ) {
                 didSendAcceptedForLastOffer = true
                 didSendClearCard = true
+                mainHandler.removeCallbacks(autoClearRunnable)
                 AppStateRepository.onAutoDetectedRideAccepted(this)
                 return
             }
@@ -139,14 +168,19 @@ class UberProfitAccessibilityService : AccessibilityService() {
             return
         }
 
+        // Oferta válida encontrada na tela!
         lastValidOfferSeenTimeSec = nowSec
         didSendClearCard = false
         didSendAcceptedForLastOffer = false
 
+        // Agenda limpeza automática para 8,5s caso o card suma e o mapa fique parado
+        mainHandler.removeCallbacks(autoClearRunnable)
+        mainHandler.postDelayed(autoClearRunnable, 8500L)
+
         val offerHash = ProfitCalculator.computeOfferHash(
-            fare = payload.fareBRL,
-            totalKm = payload.totalDistanceKm,
-            totalMin = payload.totalMinutes
+            fare = detectedPayload.fareBRL,
+            totalKm = detectedPayload.totalDistanceKm,
+            totalMin = detectedPayload.totalMinutes
         )
         pruneExpiredHashes(nowSec)
 
@@ -156,7 +190,28 @@ class UberProfitAccessibilityService : AccessibilityService() {
         }
 
         recentOfferHashes[offerHash] = nowSec
-        AppStateRepository.processIncomingOffer(this, payload)
+        AppStateRepository.processIncomingOffer(this, detectedPayload)
+    }
+
+    private fun inspectWindowNode(
+        rootNode: AccessibilityNodeInfo,
+        pkgName: String?,
+        nowSec: Double
+    ): Pair<RideOfferPayload?, String> {
+        val collectedLines = mutableListOf<ScreenTextLine>()
+        collectTextLines(rootNode, collectedLines)
+        if (collectedLines.isEmpty()) return Pair(null, "")
+
+        val sortedLines = collectedLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
+        val allScreenText = sortedLines.joinToString("\n") { it.text }
+
+        if (RideScreenParser.isInsideOwnAppOrHistoryScreen(allScreenText, pkgName)) {
+            return Pair(null, "")
+        }
+
+        val cleanCardLines = sortedLines.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
+        val payload = RideScreenParser.parseRideCard(cleanCardLines, pkgName, nowSec)
+        return Pair(payload, allScreenText)
     }
 
     private fun collectTextLines(
@@ -182,7 +237,8 @@ class UberProfitAccessibilityService : AccessibilityService() {
                     ScreenTextLine(
                         text = clean,
                         topY = rect.top,
-                        height = rect.height().coerceAtLeast(12)
+                        height = rect.height().coerceAtLeast(12),
+                        leftX = rect.left
                     )
                 )
             }
@@ -204,6 +260,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private fun checkAndClearStaleCard(nowSec: Double) {
         if (!didSendClearCard && (nowSec - lastValidOfferSeenTimeSec) >= 7.0) {
             didSendClearCard = true
+            mainHandler.removeCallbacks(autoClearRunnable)
             AppStateRepository.clearActiveCard(this)
         }
     }
@@ -218,7 +275,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
         }
     }
 
-    // MARK: - Janela Flutuante Nativa (TYPE_ACCESSIBILITY_OVERLAY)
+    // MARK: - Janela Flutuante Inteligente (Pílula Compacta em Espera ↔ Card Expandido na Corrida)
     @SuppressLint("ClickableViewAccessibility")
     private fun showOrUpdateOverlayInternal() {
         mainHandler.post {
@@ -231,11 +288,11 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
                     background = buildRoundedBackground(
-                        Color.parseColor("#141923"),
-                        Color.parseColor("#00BCD4"),
-                        dp(18),
+                        Color.parseColor("#E6111827"),
+                        Color.parseColor("#10B981"),
+                        dp(22),
                         dp(2)
                     )
                 }
@@ -247,10 +304,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
                 val badge = TextView(this).apply {
                     setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     setPadding(dp(8), dp(4), dp(8), dp(4))
-                    background = buildRoundedBackground(Color.parseColor("#45000000"), Color.TRANSPARENT, dp(8), 0)
+                    background = buildRoundedBackground(Color.parseColor("#38000000"), Color.TRANSPARENT, dp(10), 0)
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
                 headerBadgeView = badge
@@ -260,8 +317,8 @@ class UberProfitAccessibilityService : AccessibilityService() {
                     setTextColor(Color.WHITE)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    setPadding(dp(8), dp(4), dp(8), dp(4))
-                    background = buildRoundedBackground(Color.parseColor("#1B5E20"), Color.WHITE, dp(10), dp(1))
+                    setPadding(dp(9), dp(4), dp(9), dp(4))
+                    background = buildRoundedBackground(Color.parseColor("#065F46"), Color.WHITE, dp(10), dp(1))
                     val lp = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -275,10 +332,30 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 }
                 acceptButtonView = acceptBtn
 
+                // Botão rápido de Pausar Turno direto na Pílula Flutuante
+                val pauseBtn = TextView(this).apply {
+                    text = "⏸"
+                    setTextColor(Color.parseColor("#FBBF24"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    setPadding(dp(8), dp(3), dp(8), dp(3))
+                    background = buildRoundedBackground(Color.parseColor("#55000000"), Color.parseColor("#44FBBF24"), dp(10), dp(1))
+                    val lp = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                    lp.marginStart = dp(6)
+                    layoutParams = lp
+                    setOnClickListener {
+                        AppStateRepository.setShiftReadingEnabled(this@UberProfitAccessibilityService, false)
+                    }
+                }
+                pauseButtonView = pauseBtn
+
                 val closeBtn = TextView(this).apply {
                     text = "✕"
                     setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     setPadding(dp(8), dp(3), dp(8), dp(3))
                     background = buildRoundedBackground(Color.parseColor("#55000000"), Color.TRANSPARENT, dp(10), 0)
@@ -286,7 +363,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     )
-                    lp.marginStart = dp(6)
+                    lp.marginStart = dp(5)
                     layoutParams = lp
                     setOnClickListener {
                         if (AppStateRepository.latestAnalysis.value != null) {
@@ -300,6 +377,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
                 topRow.addView(badge)
                 topRow.addView(acceptBtn)
+                topRow.addView(pauseBtn)
                 topRow.addView(closeBtn)
 
                 val metricsRow = LinearLayout(this).apply {
@@ -307,10 +385,11 @@ class UberProfitAccessibilityService : AccessibilityService() {
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(dp(2), dp(6), dp(2), dp(4))
                 }
+                metricsRowContainer = metricsRow
 
                 val kmTv = TextView(this).apply {
                     setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 23f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
@@ -318,7 +397,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
                 val hourTv = TextView(this).apply {
                     setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 23f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     gravity = Gravity.END
                     layoutParams = LinearLayout.LayoutParams(
@@ -332,7 +411,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 metricsRow.addView(hourTv)
 
                 val footerTv = TextView(this).apply {
-                    setTextColor(Color.parseColor("#F5F5F5"))
+                    setTextColor(Color.parseColor("#F9FAFB"))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     gravity = Gravity.CENTER_HORIZONTAL
@@ -344,7 +423,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 card.addView(footerTv)
 
                 val params = WindowManager.LayoutParams(
-                    dp(335),
+                    dp(285),
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -353,7 +432,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 ).apply {
                     gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                     x = 0
-                    y = dp(78)
+                    y = dp(72)
                 }
                 layoutParams = params
 
@@ -403,36 +482,49 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private fun updateOverlayContentInternal() {
         mainHandler.post {
             val card = rootContainer ?: return@post
+            val lp = layoutParams ?: return@post
             val density = resources.displayMetrics.density
             fun dp(value: Int): Int = (value * density).toInt()
 
             val analysis = AppStateRepository.latestAnalysis.value
             val settings = AppStateRepository.settings.value
 
+            // MODO 1: PÍLULA COMPACTA DISCRETA (Quando não há oferta tocando na tela)
             if (analysis == null) {
+                card.setPadding(dp(10), dp(6), dp(10), dp(6))
                 card.background = buildRoundedBackground(
-                    Color.parseColor("#141923"),
-                    Color.parseColor("#00BCD4"),
-                    dp(18),
+                    Color.parseColor("#E6111827"),
+                    Color.parseColor("#10B981"),
+                    dp(24),
                     dp(2)
                 )
-                headerBadgeView?.text = "UBER & 99 PROFIT ATIVO"
+                val targetStr = String.format(Locale("pt", "BR"), "%.2f", settings.targetBRLPerKm)
+                headerBadgeView?.text = "🟢 Profit Ativo • Meta R$ $targetStr/km"
                 acceptButtonView?.visibility = View.GONE
-                kmMetricView?.text = "Monitorando..."
-                kmMetricView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                hourMetricView?.text = "Meta R$ ${String.format(Locale("pt", "BR"), "%.2f", settings.targetBRLPerKm)}/km"
-                hourMetricView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                footerDetailsView?.text = "Abra a Uber ou 99 • Arraste esta janela para onde preferir"
+                pauseButtonView?.visibility = View.VISIBLE
+                metricsRowContainer?.visibility = View.GONE
+                footerDetailsView?.visibility = View.GONE
+
+                val targetWidth = dp(285)
+                if (lp.width != targetWidth) {
+                    lp.width = targetWidth
+                    try {
+                        windowManager?.updateViewLayout(card, lp)
+                    } catch (_: Exception) {
+                    }
+                }
                 return@post
             }
 
+            // MODO 2: CARD EXPANDIDO EM CORES VIVAS (Quando uma corrida toca na Uber ou 99!)
             val bgColor = when (analysis.verdict) {
-                RideVerdict.APPROVED -> Color.parseColor("#0F8F3D")
-                RideVerdict.WARNING -> Color.parseColor("#C78505")
-                RideVerdict.REJECTED -> Color.parseColor("#B81924")
+                RideVerdict.APPROVED -> Color.parseColor("#059669")
+                RideVerdict.WARNING -> Color.parseColor("#D97706")
+                RideVerdict.REJECTED -> Color.parseColor("#DC2626")
             }
 
-            card.background = buildRoundedBackground(bgColor, Color.parseColor("#55FFFFFF"), dp(18), dp(2))
+            card.setPadding(dp(12), dp(10), dp(12), dp(10))
+            card.background = buildRoundedBackground(bgColor, Color.parseColor("#80FFFFFF"), dp(18), dp(2))
 
             val profitStr = String.format(Locale("pt", "BR"), "%.2f", analysis.netProfitBRL)
             headerBadgeView?.text = "${analysis.offer.appSource} • ${analysis.verdict.rawValue} • LUCRO R$ $profitStr"
@@ -440,6 +532,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
             val alreadyAccepted = AppStateRepository.isRideAlreadyAccepted(analysis)
             acceptButtonView?.visibility = View.VISIBLE
             acceptButtonView?.text = if (alreadyAccepted) "✓ Salva" else "✅ Aceitei"
+            pauseButtonView?.visibility = View.GONE
+            metricsRowContainer?.visibility = View.VISIBLE
+            footerDetailsView?.visibility = View.VISIBLE
 
             val shownKm = if (settings.primaryMetricDisplay == PrimaryMetricDisplay.NET) {
                 analysis.netPerKm
@@ -457,14 +552,34 @@ class UberProfitAccessibilityService : AccessibilityService() {
             kmMetricView?.text = String.format(Locale("pt", "BR"), "R$ %.2f/km", shownKm)
             hourMetricView?.text = String.format(Locale("pt", "BR"), "R$ %.0f/h", shownHour)
 
+            val distDetail = if (analysis.offer.pickupDistanceKm > 0.05 && analysis.offer.tripDistanceKm > 0.05) {
+                String.format(
+                    Locale("pt", "BR"),
+                    "Busca %.1f + Viagem %.1f km",
+                    analysis.offer.pickupDistanceKm,
+                    analysis.offer.tripDistanceKm
+                )
+            } else {
+                String.format(Locale("pt", "BR"), "%.1f km total", analysis.offer.totalDistanceKm)
+            }
+
             footerDetailsView?.text = String.format(
                 Locale("pt", "BR"),
-                "Tarifa R$ %.2f • %.1f km total • %d min • Comb. -R$ %.2f",
+                "Tarifa R$ %.2f • %s (%d min) • Comb. -R$ %.2f",
                 analysis.offer.fareBRL,
-                analysis.offer.totalDistanceKm,
+                distDetail,
                 analysis.offer.totalMinutes,
                 analysis.fuelCostBRL
             )
+
+            val expandedWidth = dp(342)
+            if (lp.width != expandedWidth) {
+                lp.width = expandedWidth
+                try {
+                    windowManager?.updateViewLayout(card, lp)
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 
