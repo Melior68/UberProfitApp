@@ -112,7 +112,7 @@ public enum PrimaryMetricDisplay: String, CaseIterable, Sendable {
 }
 
 /// Classificação de decisão da corrida
-public enum RideVerdict: String, Sendable {
+public enum RideVerdict: String, Codable, Sendable {
     case approved = "ACEITAR"
     case warning = "ATENÇÃO"
     case rejected = "RECUSAR"
@@ -126,9 +126,9 @@ public enum RideVerdict: String, Sendable {
     }
 }
 
-/// Resultado completo do cálculo de lucratividade
-public struct RideAnalysis: Identifiable, Sendable, Equatable {
-    public let id = UUID()
+/// Resultado completo do cálculo de lucratividade (persistível em JSON / UserDefaults)
+public struct RideAnalysis: Identifiable, Codable, Sendable, Equatable {
+    public var id: UUID
     public let offer: RideOfferPayload
     public let grossPerKm: Double
     public let grossPerHour: Double
@@ -137,6 +137,28 @@ public struct RideAnalysis: Identifiable, Sendable, Equatable {
     public let netPerKm: Double
     public let netPerHour: Double
     public let verdict: RideVerdict
+
+    public init(
+        id: UUID = UUID(),
+        offer: RideOfferPayload,
+        grossPerKm: Double,
+        grossPerHour: Double,
+        fuelCostBRL: Double,
+        netProfitBRL: Double,
+        netPerKm: Double,
+        netPerHour: Double,
+        verdict: RideVerdict
+    ) {
+        self.id = id
+        self.offer = offer
+        self.grossPerKm = grossPerKm
+        self.grossPerHour = grossPerHour
+        self.fuelCostBRL = fuelCostBRL
+        self.netProfitBRL = netProfitBRL
+        self.netPerKm = netPerKm
+        self.netPerHour = netPerHour
+        self.verdict = verdict
+    }
 }
 
 /// Configurações do motorista persistidas em `UserDefaults`

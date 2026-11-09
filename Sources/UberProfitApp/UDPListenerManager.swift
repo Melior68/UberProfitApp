@@ -12,6 +12,7 @@ public final class UDPListenerManager: ObservableObject {
 
     public var onOfferReceived: ((RideOfferPayload) -> Void)?
     public var onClearCardRequested: (() -> Void)?
+    public var onRideAcceptedDetected: (() -> Void)?
 
     private var listener: NWListener?
     private var screenCheckTimer: Timer?
@@ -124,6 +125,11 @@ public final class UDPListenerManager: ObservableObject {
                 } else if status == "CLEAR_CARD" {
                     self.lastPacketTime = Date()
                     self.broadcastActive = true
+                    self.onClearCardRequested?()
+                } else if status == "RIDE_ACCEPTED" {
+                    self.lastPacketTime = Date()
+                    self.broadcastActive = true
+                    self.onRideAcceptedDetected?()
                     self.onClearCardRequested?()
                 } else {
                     self.lastPacketTime = Date()

@@ -1,17 +1,38 @@
 import Foundation
 import UserNotifications
 
-/// Dispara notificações locais imediatas (Banner no topo da tela do iPhone) com som e resumo completo
-/// da corrida assim que o card da Uber ou 99 aparece, respeitando a preferência de métrica (Bruto vs Líquido).
+/// Dispara notificações locais imediatas (Banner no topo da tela do iPhone) com som, resumo completo
+/// e ação rápida "✅ Aceitei essa Corrida" para salvar nos Ganhos do Turno sem precisar abrir o app.
 @MainActor
 public final class NotificationAlertManager: NSObject, ObservableObject, @preconcurrency UNUserNotificationCenterDelegate {
     @Published public private(set) var isAuthorized: Bool = false
+
+    public var onAcceptRideFromNotification: (() -> Void)?
+
+    private let offerCategoryIdentifier = "UBER_PROFIT_OFFER_CATEGORY"
+    private let acceptActionIdentifier = "ACCEPT_RIDE_ACTION"
 
     public override init() {
         super.init()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
+        registerNotificationCategories()
         requestAuthorizationIfNeeded()
+    }
+
+    private func registerNotificationCategories() {
+        let acceptAction = UNNotificationAction(
+            identifier: acceptActionIdentifier,
+            title: "✅ Aceitei essa Corrida (Salvar nos Ganhos)",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: offerCategoryIdentifier,
+            actions: [acceptAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([category])
     }
 
     public func requestAuthorizationIfNeeded() {
@@ -41,6 +62,7 @@ public final class NotificationAlertManager: NSObject, ObservableObject, @precon
         content.title = "\(analysis.verdict.emoji) \(analysis.verdict.rawValue) (\(analysis.offer.appSource)) • \(kmStr) • \(hourStr)"
         content.subtitle = "Lucro Livre: \(netStr) (Gasolina: \(fuelStr))"
         content.body = "Tarifa: \(fareStr)  •  Total: \(distStr) (\(analysis.offer.totalMinutes) min)"
+        content.categoryIdentifier = offerCategoryIdentifier
         content.sound = .default
         if #available(iOS 15.0, *) {
             content.interruptionLevel = .timeSensitive
@@ -61,5 +83,16 @@ public final class NotificationAlertManager: NSObject, ObservableObject, @precon
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .list, .sound])
+    }
+
+    public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if response.actionIdentifier == acceptActionIdentifier {
+            onAcceptRideFromNotification?()
+        }
+        completionHandler()
     }
 }

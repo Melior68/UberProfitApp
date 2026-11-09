@@ -40,6 +40,7 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
     private var recentOfferHashes: [Int: TimeInterval] = [:]
     private var lastValidOfferSeenTime: TimeInterval = 0
     private var didSendClearCard: Bool = true
+    private var didSendAcceptedForLastOffer: Bool = true
     private var isProcessingFrame: Bool = false
     private var udpConnection: NWConnection?
     private let processingQueue = DispatchQueue(label: "com.uberprofit.screenreader.vision", qos: .userInteractive)
@@ -122,7 +123,7 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
         request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
         request.minimumTextHeight = 0.011
-        // Lê a tela inteira verticalmente (0.05 a 0.90) para detectar se estamos dentro do próprio app UberProfit ou tela de Histórico
+        // Lê a tela inteira verticalmente (0.04 a 0.90) para detectar se estamos dentro do próprio app UberProfit ou tela de Histórico
         request.regionOfInterest = CGRect(x: 0.0, y: 0.04, width: 1.0, height: 0.86)
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
@@ -164,12 +165,14 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
         guard !cardLines.isEmpty,
               let payload = parseRideCard(from: cardLines, timestamp: timestamp) else {
+            checkIfOfferWasAcceptedOnScreen(allScreenText: allScreenText, now: timestamp)
             checkAndClearStaleCard(now: timestamp)
             return
         }
 
         lastValidOfferSeenTime = timestamp
         didSendClearCard = false
+        didSendAcceptedForLastOffer = false
 
         let offerHash = computeOfferHash(fare: payload.fareBRL, totalKm: payload.totalDistanceKm, totalMin: payload.totalMinutes)
         pruneExpiredHashes(now: timestamp)
@@ -182,6 +185,34 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
         sendOfferViaUDP(payload)
     }
 
+    private func checkIfOfferWasAcceptedOnScreen(allScreenText: String, now: TimeInterval) {
+        // Se uma oferta acabou de aparecer (nos últimos 22s) e a tela mudou para a tela de embarque/navegação de corrida aceita:
+        guard !didSendAcceptedForLastOffer,
+              lastValidOfferSeenTime > 0,
+              (now - lastValidOfferSeenTime) <= 22.0 else { return }
+
+        let upper = allScreenText.uppercased()
+        let isAcceptedTripScreen =
+            upper.contains("INICIAR VIAGEM") ||
+            upper.contains("INICIAR CORRIDA") ||
+            upper.contains("IR PARA O EMBARQUE") ||
+            upper.contains("A CAMINHO DO") ||
+            upper.contains("CHEGUEI NO LOCAL") ||
+            upper.contains("CHEGUEI AO LOCAL") ||
+            upper.contains("DESLIZE PARA INICIAR") ||
+            upper.contains("AGUARDANDO PASSAGEIRO") ||
+            upper.contains("BUSCAR PASSAGEIRO") ||
+            upper.contains("ENCONTRAR COM") ||
+            upper.contains("CANCELAR VIAGEM") ||
+            upper.contains("CANCELAR CORRIDA")
+
+        if isAcceptedTripScreen {
+            didSendAcceptedForLastOffer = true
+            didSendClearCard = true
+            sendPingStatus(status: "RIDE_ACCEPTED")
+        }
+    }
+
     private func checkAndClearStaleCard(now: TimeInterval) {
         // Se já se passaram 7 segundos desde que o card da corrida sumiu da tela, limpa o PiP automaticamente!
         if !didSendClearCard && (now - lastValidOfferSeenTime) >= 7.0 {
@@ -192,11 +223,15 @@ public final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable 
 
     private func isInsideOwnAppOrHistoryScreen(_ screenText: String) -> Bool {
         let upper = screenText.uppercased()
-        // 1. Detecta se a tela aberta é o próprio app Uber & 99 Profit Auto (Painel, Metas, Personalizar, Histórico)
+        // 1. Detecta se a tela aberta é o próprio app Uber & 99 Profit Auto (Painel, Ganhos, Metas, Personalizar, Histórico)
         if upper.contains("UBER & 99 PROFIT AUTO") ||
            upper.contains("METAS & CARRO") ||
            upper.contains("MONITORAMENTO AO VIVO") ||
            upper.contains("OFERTAS REGISTRADAS") ||
+           upper.contains("CORRIDAS ACEITAS") ||
+           upper.contains("GANHOS DO TURNO") ||
+           upper.contains("LUCRO LIVRE NO BOLSO") ||
+           upper.contains("LANÇAR CORRIDA") ||
            upper.contains("TESTAR FUNCIONAMENTO") ||
            upper.contains("SIMULAR CORRIDA") ||
            upper.contains("DIAGNÓSTICO OCR") ||
