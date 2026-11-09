@@ -121,24 +121,56 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
         }
 
+        // 2. Captura nós anexados diretamente ao evento (crucial para 99 quando o card fica em janela secundária)
+        try {
+            event.source?.let { src ->
+                cacheEventSourceNode(src, pkgName)
+            }
+        } catch (_: Exception) {
+        }
+
         if (RideScreenParser.isRideAppPackage(pkgName)) {
             lastRideAppEventMillis = System.currentTimeMillis()
             startHeartbeatIfNeeded()
         }
 
         // Trailing debounce: sempre agenda uma varredura ~250ms após o ÚLTIMO evento.
-        // (Antes, o throttle descartava os eventos finais e o card da 99/Uber nunca era relido.)
         mainHandler.removeCallbacks(scanRunnable)
         val nowMillis = System.currentTimeMillis()
-        if (nowMillis - lastProcessedMillis >= 600L) {
+        if (nowMillis - lastProcessedMillis >= 500L) {
             performScan()
         } else {
-            mainHandler.postDelayed(scanRunnable, 250L)
+            mainHandler.postDelayed(scanRunnable, 220L)
         }
     }
 
     private var lastRideAppEventMillis: Long = 0L
     private var heartbeatRunning = false
+    private val cachedEventLines = mutableListOf<ScreenTextLine>()
+    private var lastCachedEventMillis: Long = 0L
+
+    private fun cacheEventSourceNode(sourceNode: AccessibilityNodeInfo, pkgName: String?) {
+        if (!RideScreenParser.isRideAppPackage(pkgName)) return
+        val now = System.currentTimeMillis()
+        if (now - lastCachedEventMillis > 3500L) {
+            cachedEventLines.clear()
+        }
+        // Sobe até o topo dessa sub-árvore para pegar todo o card caso o evento venha de um filho
+        var topNode: AccessibilityNodeInfo = sourceNode
+        var hops = 0
+        while (hops < 15) {
+            val parent = try { topNode.parent } catch (_: Exception) { null } ?: break
+            topNode = parent
+            hops++
+        }
+        val lines = mutableListOf<ScreenTextLine>()
+        collectTextLines(topNode, lines, requireVisible = false, depth = 0)
+        if (lines.any { it.text.contains("R$") || it.text.contains("km", ignoreCase = true) || it.text.contains("min", ignoreCase = true) }) {
+            cachedEventLines.clear()
+            cachedEventLines.addAll(lines)
+            lastCachedEventMillis = now
+        }
+    }
 
     private val scanRunnable = Runnable { performScan() }
 
@@ -187,15 +219,18 @@ class UberProfitAccessibilityService : AccessibilityService() {
         }
 
         val seenKeys = HashSet<String>()
-        for (root in roots) {
+        for ((idx, root) in roots.withIndex()) {
+            try { root.refresh() } catch (_: Exception) {}
             val rootPkg = root.packageName?.toString()
             if (rootPkg == packageName || RideScreenParser.isIgnoredPackage(rootPkg)) continue
-            val key = "${rootPkg}_${root.windowId}"
+            val rootBounds = Rect()
+            try { root.getBoundsInScreen(rootBounds) } catch (_: Exception) {}
+            val key = "${rootPkg}_${root.windowId}_${root.className}_${rootBounds.top}_${rootBounds.bottom}_$idx"
             if (!seenKeys.add(key)) continue
 
             val res = inspectWindowNode(root, rootPkg, nowSec)
             if (RideScreenParser.isRideAppPackage(rootPkg) && res.second.isNotEmpty()) {
-                dump.append("📦 ").append(rootPkg).append("\n").append(res.second).append("\n\n")
+                dump.append("📦 ").append(rootPkg).append(" (win=").append(root.windowId).append(")\n").append(res.second).append("\n\n")
             }
             if (res.second.isNotEmpty() && activeScreenText.isEmpty()) {
                 activeScreenText = res.second
@@ -207,7 +242,30 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
         }
 
+        // Se as janelas raízes (ex: Dialog "Erro de rede") cobriram o card, analisa os nós capturados direto do evento!
+        if (detectedPayload == null &&
+            cachedEventLines.isNotEmpty() &&
+            (lastProcessedMillis - lastCachedEventMillis) <= 3500L
+        ) {
+            val sortedCached = cachedEventLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
+            val cachedText = sortedCached.joinToString("\n") { it.text }
+            val cleanCached = sortedCached.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
+            val cachedPayload = RideScreenParser.parseRideCard(cleanCached, "com.app99.driver", nowSec)
+            if (cachedText.isNotEmpty()) {
+                dump.append("📦 event.source (cache recente)\n").append(cachedText).append("\n\n")
+            }
+            if (cachedPayload != null) {
+                detectedPayload = cachedPayload
+                activeScreenText = cachedText
+            }
+        }
+
         if (dump.isNotEmpty()) {
+            val rawDumpStr = dump.toString()
+            val hasRichOfferContent = detectedPayload != null ||
+                rawDumpStr.contains("R$") ||
+                rawDumpStr.contains("/km", ignoreCase = true) ||
+                rawDumpStr.contains("min (", ignoreCase = true)
             val header = if (detectedPayload != null) {
                 String.format(
                     java.util.Locale("pt", "BR"),
@@ -217,7 +275,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
             } else {
                 "⚠️ Nenhuma oferta reconhecida nesta leitura\n\n"
             }
-            AppStateRepository.setLastScreenDump(header + dump.toString().take(4000))
+            AppStateRepository.setLastScreenDump(
+                dump = header + rawDumpStr.take(3500),
+                isRichOrOffer = hasRichOfferContent
+            )
         }
 
         if (detectedPayload == null) {
@@ -268,10 +329,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
         nowSec: Double
     ): Pair<RideOfferPayload?, String> {
         val collectedLines = mutableListOf<ScreenTextLine>()
-        collectTextLines(rootNode, collectedLines, requireVisible = true, depth = 0)
-        // Alguns apps (ex: 99) marcam os textos do card como "não visíveis" para a acessibilidade.
-        // Se não achamos nenhum "R$", refazemos a coleta sem o filtro de visibilidade.
-        if (RideScreenParser.isRideAppPackage(pkgName) && collectedLines.none { it.text.contains("R$") }) {
+        val is99Pkg = pkgName?.lowercase()?.let { it.contains("99") || it.contains("didi") || it.contains("taxis") } == true
+        collectTextLines(rootNode, collectedLines, requireVisible = !is99Pkg, depth = 0)
+        // Se para outros apps de corrida não achamos "R$", tenta sem filtro de visibilidade também
+        if (!is99Pkg && RideScreenParser.isRideAppPackage(pkgName) && collectedLines.none { it.text.contains("R$") }) {
             collectedLines.clear()
             collectTextLines(rootNode, collectedLines, requireVisible = false, depth = 0)
         }
@@ -295,23 +356,25 @@ class UberProfitAccessibilityService : AccessibilityService() {
         requireVisible: Boolean,
         depth: Int
     ) {
-        if (node == null || depth > 60 || output.size > 600) return
+        if (node == null || depth > 70 || output.size > 750) return
         if (requireVisible && !node.isVisibleToUser) return
 
         val rect = Rect()
-        node.getBoundsInScreen(rect)
-        // Ignora nós fora da tela (bounds vazios) quando estamos sem filtro de visibilidade
-        if (!requireVisible && (rect.width() <= 0 || rect.height() <= 0)) return
+        try { node.getBoundsInScreen(rect) } catch (_: Exception) {}
 
         val rawText = node.text?.toString()?.let { normalizeText(it) }
         val rawDesc = node.contentDescription?.toString()?.let { normalizeText(it) }
 
-        // Lê o texto E a descrição (algumas versões da 99/Uber colocam o valor só na descrição)
+        // Lê o texto E a descrição (mesmo que o container tenha bounds 0x0, ainda descemos nos filhos)
+        val safeTopY = if (rect.top > 0) rect.top else (depth * 14)
+        val safeHeight = if (rect.height() > 0) rect.height().coerceAtLeast(12) else 24
+        val safeLeftX = if (rect.left >= 0) rect.left else 0
+
         if (!rawText.isNullOrEmpty()) {
-            output.add(ScreenTextLine(text = rawText, topY = rect.top, height = rect.height().coerceAtLeast(12), leftX = rect.left))
+            output.add(ScreenTextLine(text = rawText, topY = safeTopY, height = safeHeight, leftX = safeLeftX))
         }
         if (!rawDesc.isNullOrEmpty() && rawDesc != rawText) {
-            output.add(ScreenTextLine(text = rawDesc, topY = rect.top, height = rect.height().coerceAtLeast(12), leftX = rect.left))
+            output.add(ScreenTextLine(text = rawDesc, topY = safeTopY, height = safeHeight, leftX = safeLeftX))
         }
 
         val childCount = node.childCount

@@ -42,8 +42,35 @@ object AppStateRepository {
     private val _lastScreenDump = MutableStateFlow("")
     val lastScreenDump: StateFlow<String> = _lastScreenDump.asStateFlow()
 
-    fun setLastScreenDump(dump: String) {
-        _lastScreenDump.value = dump
+    // Histórico das últimas 5 leituras com R$ (ou ofertas) para que uma janela "Erro de rede" não apague o card
+    private val recentRichDumps = ArrayDeque<String>()
+
+    fun setLastScreenDump(dump: String, isRichOrOffer: Boolean = false) {
+        if (isRichOrOffer) {
+            val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date())
+            val entry = "🕒 [$timestamp]\n$dump"
+            if (recentRichDumps.firstOrNull()?.substringAfter("\n") != dump) {
+                recentRichDumps.addFirst(entry)
+                while (recentRichDumps.size > 4) {
+                    recentRichDumps.removeLast()
+                }
+            }
+        }
+        val combined = buildString {
+            appendLine("=== LEITURA ATUAL DA TELA ===")
+            appendLine(dump.trim())
+            if (recentRichDumps.isNotEmpty()) {
+                appendLine()
+                appendLine("=== ÚLTIMAS TELAS COM VALORES (R$) CAPTURADAS ===")
+                recentRichDumps.forEachIndexed { idx, item ->
+                    appendLine("--- Captura #${idx + 1} ---")
+                    appendLine(item.trim())
+                    appendLine()
+                }
+            }
+        }
+        _lastScreenDump.value = combined.take(6500)
     }
 
     fun initIfNeeded(context: Context) {

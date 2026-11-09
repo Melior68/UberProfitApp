@@ -37,6 +37,12 @@ object RideScreenParser {
         Pattern.CASE_INSENSITIVE
     )
 
+    // Padrão da 99 quando o card exibe "R$2,04/km" ou "R$ 2,05/km" logo abaixo do preço
+    private val ratePerKmPattern: Pattern = Pattern.compile(
+        """(?:R\s*\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))\s*/\s*km""",
+        Pattern.CASE_INSENSITIVE
+    )
+
     // Pacotes de sistema ou apps comuns que NUNCA devem ser lidos se não houver sobreposição da Uber/99
     private val ignoredPackages = setOf(
         "com.uberprofit.auto",
@@ -173,9 +179,12 @@ object RideScreenParser {
         val lowerFull = fullText.lowercase()
         val pkgLower = (packageName ?: "").lowercase()
 
-        val isCollapsed99Drawer = lowerFull.contains("solicitações") ||
+        val isCollapsed99Drawer = (lowerFull.contains("solicitações") ||
             lowerFull.contains("solicitacoes") ||
-            lowerFull.contains("buscando")
+            lowerFull.contains("buscando")) &&
+            !lowerFull.contains("pgto") &&
+            !lowerFull.contains("toque abaixo") &&
+            !lowerFull.contains("/km")
 
         val is99Card = pkgLower.contains("99") ||
             pkgLower.contains("didi") ||
@@ -197,7 +206,7 @@ object RideScreenParser {
         if (fare < 4.5 || fare > 950.0) return null
 
         // 2. Extrai Distâncias e Tempos
-        val stepsResult = extractStructuredSteps(fullText)
+        val stepsResult = extractStructuredSteps(fullText, fare)
 
         // Proteção contra a gaveta recolhida "Solicitações / Buscando" da 99 com segunda linha cortada
         if (isCollapsed99Drawer && stepsResult.stepCount < 2) {
@@ -284,7 +293,7 @@ object RideScreenParser {
         val stepCount: Int
     )
 
-    private fun extractStructuredSteps(fullText: String): StepsResult {
+    private fun extractStructuredSteps(fullText: String, fareBRL: Double): StepsResult {
         var summaryResult: Pair<Int, Double>? = null
         val summaryMatcher = uberSummaryPattern.matcher(fullText)
         if (summaryMatcher.find()) {
@@ -361,6 +370,17 @@ object RideScreenParser {
         val onlyStep = uniqueSteps.firstOrNull()
         if (onlyStep != null) {
             return StepsResult(0.0, onlyStep.second, onlyStep.second, 0, onlyStep.first, onlyStep.first, 1)
+        }
+
+        // Fallback para cards da 99 onde o Android retorna apenas "R$17,50" e "R$2,04/km"
+        val rateMatcher = ratePerKmPattern.matcher(fullText)
+        if (rateMatcher.find() && fareBRL > 0) {
+            val ratePerKm = rateMatcher.group(1)?.replace(",", ".")?.toDoubleOrNull() ?: 0.0
+            if (ratePerKm >= 0.4) {
+                val estTotalKm = (fareBRL / ratePerKm).coerceIn(0.5, 250.0)
+                val estTotalMin = max((estTotalKm * 2.4).toInt(), 3)
+                return StepsResult(0.0, estTotalKm, estTotalKm, 0, estTotalMin, estTotalMin, 2)
+            }
         }
 
         return StepsResult(0.0, 0.0, 0.0, 0, 0, 0, 0)
