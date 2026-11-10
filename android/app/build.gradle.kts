@@ -11,8 +11,8 @@ android {
         applicationId = "com.uberprofit.auto"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "15.0"
+        versionCode = 16
+        versionName = "16.0"
 
         vectorDrawables {
             useSupportLibrary = true

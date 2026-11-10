@@ -34,10 +34,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private var didSendClearCard: Boolean = true
     private var didSendAcceptedForLastOffer: Boolean = true
 
-    // Timer automático para recolher o card de volta para a Pílula Compacta após 8,5s sem oferta na tela
+    // Timer automático para recolher o card de volta para a Pílula Compacta após 5s sem oferta na tela
     private val autoClearRunnable = Runnable {
         val nowSec = System.currentTimeMillis() / 1000.0
-        if (!didSendClearCard && (nowSec - lastValidOfferSeenTimeSec) >= 8.0) {
+        if (!didSendClearCard && (nowSec - lastValidOfferSeenTimeSec) >= 5.0) {
             didSendClearCard = true
             AppStateRepository.clearActiveCard(this@UberProfitAccessibilityService)
         }
@@ -415,9 +415,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
         didSendClearCard = false
         didSendAcceptedForLastOffer = false
 
-        // Agenda limpeza automática para 8,5s caso o card suma e o mapa fique parado
+        // Agenda limpeza automática para 5s caso o card suma e o mapa fique parado
         mainHandler.removeCallbacks(autoClearRunnable)
-        mainHandler.postDelayed(autoClearRunnable, 8500L)
+        mainHandler.postDelayed(autoClearRunnable, 5000L)
 
         val offerHash = ProfitCalculator.computeOfferHash(
             fare = detectedPayload.fareBRL,
@@ -457,7 +457,8 @@ class UberProfitAccessibilityService : AccessibilityService() {
             return Pair(null, "")
         }
 
-        val cleanCardLines = sortedLines.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
+        // Filtra zona do nosso overlay flutuante (topY <= 230) e linhas com termos próprios
+        val cleanCardLines = sortedLines.filter { it.topY > 230 && !RideScreenParser.isSelfOverlayLine(it.text) }
         val payload = RideScreenParser.parseRideCard(cleanCardLines, pkgName, nowSec)
         return Pair(payload, allScreenText)
     }
@@ -511,7 +512,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
     }
 
     private fun checkAndClearStaleCard(nowSec: Double) {
-        if (!didSendClearCard && (nowSec - lastValidOfferSeenTimeSec) >= 7.0) {
+        if (!didSendClearCard && (nowSec - lastValidOfferSeenTimeSec) >= 4.5) {
             didSendClearCard = true
             mainHandler.removeCallbacks(autoClearRunnable)
             AppStateRepository.clearActiveCard(this)

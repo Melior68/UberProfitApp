@@ -190,6 +190,7 @@ object RideScreenParser {
             lowerFull.contains("solicitacoes") ||
             lowerFull.contains("buscando")) &&
             !lowerFull.contains("escolher") &&
+            !lowerFull.contains("aceitar por") &&
             !lowerFull.contains("pgto") &&
             !lowerFull.contains("toque abaixo") &&
             !lowerFull.contains("/km")
@@ -204,17 +205,25 @@ object RideScreenParser {
             lowerFull.contains("tarifa base") ||
             lowerFull.contains("cpf verif") ||
             lowerFull.contains("perfil premium") ||
+            lowerFull.contains("perfil essencial") ||
             lowerFull.contains("negocia") ||
-            lowerFull.contains("poupa")
+            lowerFull.contains("poupa") ||
+            lowerFull.contains("sem pressa")
 
         val appSource = if (is99Card) "99" else "UBER"
 
-        // 1. Extrai a Tarifa Principal em Reais
-        val fare = extractMainFareBRL(combinedLines, fullText) ?: return null
+        // 1. Agrupamento por Card: Se houver múltiplos cards na tela (ex: Pop Sem Pressa + Negocia),
+        // isola o card do topo para não misturar os valores de um com o outro!
+        val targetLines = isolateTopRideCardLines(mergedLines)
+        val targetFullText = targetLines.joinToString("\n") { it.text }
+
+        // 2. Extrai a Tarifa Principal do Card em foco
+        val fare = extractMainFareBRL(targetLines, targetFullText) ?: extractMainFareBRL(combinedLines, fullText) ?: return null
         if (fare < 4.5 || fare > 950.0) return null
 
-        // 2. Extrai Distâncias e Tempos
-        val stepsResult = extractStructuredSteps(fullText, fare)
+        // 3. Extrai Distâncias e Tempos do Card em foco
+        val stepsResult = extractStructuredSteps(targetFullText, fare).takeIf { it.totalKm > 0.3 }
+            ?: extractStructuredSteps(fullText, fare)
 
         // Proteção contra a gaveta recolhida "Solicitações / Buscando" da 99 com segunda linha cortada
         if (isCollapsed99Drawer && stepsResult.stepCount < 2) {
@@ -234,9 +243,32 @@ object RideScreenParser {
             pickupMinutes = stepsResult.pickupMin,
             tripMinutes = stepsResult.tripMin,
             totalMinutes = stepsResult.totalMin,
-            rawRecognizedText = fullText,
+            rawRecognizedText = targetFullText.ifEmpty { fullText },
             timestamp = timestamp
         )
+    }
+
+    /**
+     * Quando a 99 exibe múltiplos cartões na lista de solicitações
+     * (ex: "Pop Sem Pressa R$7,49" em cima e "Negocia R$6,59" embaixo),
+     * corta a análise no botão do primeiro card ("Escolher" / "Aceitar")
+     * para não somar a distância do segundo card na corrida do primeiro!
+     */
+    private fun isolateTopRideCardLines(lines: List<ScreenTextLine>): List<ScreenTextLine> {
+        if (lines.size <= 4) return lines
+        val sorted = lines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
+        
+        // Procura onde termina o primeiro card (botão Escolher / Aceitar)
+        val cutoffIndex = sorted.indexOfFirst {
+            val u = it.text.uppercase()
+            u == "ESCOLHER" || u.startsWith("ACEITAR POR") || u == "ACEITAR" || u == "TOQUE ABAIXO PARA ACEITAR"
+        }
+        
+        if (cutoffIndex != -1 && cutoffIndex >= 2) {
+            // Pega as linhas até o botão do primeiro card inclusive
+            return sorted.take(cutoffIndex + 1)
+        }
+        return lines
     }
 
     private fun extractMainFareBRL(lines: List<ScreenTextLine>, fullText: String): Double? {
