@@ -60,6 +60,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
         activeInstance = this
         AppStateRepository.initIfNeeded(this)
         AppStateRepository.setAccessibilityConnected(true)
+        checkCurrentForegroundFromWindows()
         val s = AppStateRepository.settings.value
         if (s.isShiftReadingEnabled && s.visualAlertMode != VisualAlertMode.NOTIFICATION) {
             showOrUpdateOverlayInternal()
@@ -102,12 +103,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
         // Rastreia exatamente se a tela em primeiro plano é a 99 ou a Uber
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val wasRideApp = isRideAppForeground
             currentForegroundPackage = pkgName
             isRideAppForeground = RideScreenParser.isRideAppPackage(pkgName)
             if (!isRideAppForeground) {
                 // Se o usuário saiu da Uber/99 e foi pro WhatsApp, tela inicial, etc., oculta a pílula flutuante
-                // e limpa qualquer oferta anterior da tela!
                 hideOverlayIfOutsideRideApps()
                 AppStateRepository.clearActiveCard(this)
                 return
@@ -117,8 +116,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Se o evento vier de outro app (ex: notificação do Facebook/WhatsApp aparecendo por cima), ignora completamente!
-        if (!RideScreenParser.isRideAppPackage(pkgName)) {
+        // Se o evento não for da Uber ou 99, mas a 99/Uber já estiver em primeiro plano,
+        // não bloqueia o processamento da tela da 99!
+        val isEventFromRideApp = RideScreenParser.isRideAppPackage(pkgName)
+        if (!isEventFromRideApp && !isRideAppForeground) {
             return
         }
 
@@ -181,6 +182,24 @@ class UberProfitAccessibilityService : AccessibilityService() {
             view.visibility = View.VISIBLE
             updateOverlayContentInternal()
         }
+    }
+
+    private fun checkCurrentForegroundFromWindows() {
+        try {
+            val wins = windows ?: return
+            for (win in wins) {
+                if (win.isFocused || win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    val root = win.root ?: continue
+                    val pkg = root.packageName?.toString() ?: continue
+                    if (RideScreenParser.isRideAppPackage(pkg)) {
+                        isRideAppForeground = true
+                        currentForegroundPackage = pkg
+                        showOverlayIfInsideRideApps()
+                        return
+                    }
+                }
+            }
+        } catch (_: Exception) {}
     }
     private var isRideAppForeground = false
     private var currentForegroundPackage = ""
@@ -791,21 +810,34 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
             // MODO 1: PÍLULA COMPACTA DISCRETA (Quando não há oferta tocando na tela)
             if (analysis == null) {
-                card.setPadding(dp(10), dp(6), dp(10), dp(6))
+                card.setPadding(dp(12), dp(6), dp(12), dp(6))
                 card.background = buildRoundedBackground(
                     Color.parseColor("#E6111827"),
                     Color.parseColor("#10B981"),
                     dp(24),
-                    dp(2)
+                    dp(1.5f.toInt())
                 )
+                
+                // Métricas do Turno em tempo real (Ganhos Acumulados / Corridas Aceitas)
+                val acceptedRides = AppStateRepository.acceptedRides.value
+                val totalGross = acceptedRides.sumOf { it.offer.fareBRL }
+                val acceptedCount = acceptedRides.size
                 val targetStr = String.format(Locale("pt", "BR"), "%.2f", settings.targetBRLPerKm)
-                headerBadgeView?.text = "🟢 Profit Ativo • Meta R$ $targetStr/km"
+                
+                val statusText = if (acceptedCount > 0) {
+                    val grossStr = String.format(Locale("pt", "BR"), "%.2f", totalGross)
+                    "🟢 R$ $grossStr ($acceptedCount) • Meta R$ $targetStr/km"
+                } else {
+                    "🟢 Profit Ativo • Meta R$ $targetStr/km"
+                }
+
+                headerBadgeView?.text = statusText
                 acceptButtonView?.visibility = View.GONE
                 pauseButtonView?.visibility = View.VISIBLE
                 metricsRowContainer?.visibility = View.GONE
                 footerDetailsView?.visibility = View.GONE
 
-                val targetWidth = dp(285)
+                val targetWidth = if (acceptedCount > 0) dp(305) else dp(285)
                 if (lp.width != targetWidth) {
                     lp.width = targetWidth
                     try {
