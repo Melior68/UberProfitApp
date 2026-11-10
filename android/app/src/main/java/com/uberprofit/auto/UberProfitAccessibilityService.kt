@@ -96,9 +96,23 @@ class UberProfitAccessibilityService : AccessibilityService() {
         if (event == null) return
         if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
 
-        val pkgName = event.packageName?.toString()
+        val pkgName = event.packageName?.toString() ?: ""
         if (pkgName == packageName) return
         if (RideScreenParser.isIgnoredPackage(pkgName)) return
+
+        // Rastreia exatamente se a tela em primeiro plano é a 99 ou a Uber
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            currentForegroundPackage = pkgName
+            isRideAppForeground = RideScreenParser.isRideAppPackage(pkgName)
+            if (!isRideAppForeground) {
+                // Se o usuário saiu da Uber/99 e foi pro WhatsApp, tela inicial, etc., oculta a pílula flutuante!
+                hideOverlayIfOutsideRideApps()
+                return
+            } else {
+                // Ao voltar para a 99 ou Uber, reexibe a pílula
+                showOverlayIfInsideRideApps()
+            }
+        }
 
         val nowSec = System.currentTimeMillis() / 1000.0
 
@@ -146,6 +160,22 @@ class UberProfitAccessibilityService : AccessibilityService() {
     }
 
     private var lastRideAppEventMillis: Long = 0L
+    private fun hideOverlayIfOutsideRideApps() {
+        mainHandler.post {
+            val view = rootContainer ?: return@post
+            view.visibility = View.GONE
+        }
+    }
+
+    private fun showOverlayIfInsideRideApps() {
+        mainHandler.post {
+            val view = rootContainer ?: return@post
+            view.visibility = View.VISIBLE
+            updateOverlayContentInternal()
+        }
+    }
+    private var isRideAppForeground = false
+    private var currentForegroundPackage = ""
     private var heartbeatRunning = false
     private val cachedEventLines = mutableListOf<ScreenTextLine>()
     private var lastCachedEventMillis: Long = 0L
@@ -261,9 +291,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
                                     // ou que contenham palavras do nosso próprio card flutuante
                                     val filteredOcr = ocrLines.filter { item ->
                                         // A nossa pílula fica no topo (y < 230). O card da corrida da 99/Uber fica da metade para baixo (y > 300)
-                                        val isNotOurFloatingZone = item.topY > 230
-                                        val isNotSelfOverlay = !RideScreenParser.isSelfOverlayLine(item.text)
-                                        isNotOurFloatingZone && isNotSelfOverlay
+                    val isNotOurFloatingZone = item.topY > 230
+                    val isNotSelfOverlay = !RideScreenParser.isSelfOverlayLine(item.text)
+                    isNotOurFloatingZone && isNotSelfOverlay
                                     }
 
                                     val sortedOcr = filteredOcr.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
@@ -771,14 +801,14 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
 
             // MODO 2: CARD EXPANDIDO EM CORES VIVAS (Quando uma corrida toca na Uber ou 99!)
-            val bgColor = when (analysis.verdict) {
-                RideVerdict.APPROVED -> Color.parseColor("#059669")
-                RideVerdict.WARNING -> Color.parseColor("#D97706")
-                RideVerdict.REJECTED -> Color.parseColor("#DC2626")
+            val (bgColor, strokeColor) = when (analysis.verdict) {
+                RideVerdict.APPROVED -> Pair(Color.parseColor("#064E3B"), Color.parseColor("#34D399"))
+                RideVerdict.WARNING -> Pair(Color.parseColor("#78350F"), Color.parseColor("#FBBF24"))
+                RideVerdict.REJECTED -> Pair(Color.parseColor("#7F1D1D"), Color.parseColor("#F87171"))
             }
 
-            card.setPadding(dp(12), dp(10), dp(12), dp(10))
-            card.background = buildRoundedBackground(bgColor, Color.parseColor("#80FFFFFF"), dp(18), dp(2))
+            card.setPadding(dp(14), dp(8), dp(14), dp(8))
+            card.background = buildRoundedBackground(bgColor, strokeColor, dp(16), dp(1.5f.toInt()))
 
             val profitStr = String.format(Locale("pt", "BR"), "%.2f", analysis.netProfitBRL)
             headerBadgeView?.text = "${analysis.offer.appSource} • ${analysis.verdict.rawValue} • LUCRO R$ $profitStr"
@@ -801,32 +831,32 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 analysis.grossPerHour
             }
 
-            kmMetricView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            hourMetricView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            kmMetricView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            hourMetricView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             kmMetricView?.text = String.format(Locale("pt", "BR"), "R$ %.2f/km", shownKm)
             hourMetricView?.text = String.format(Locale("pt", "BR"), "R$ %.0f/h", shownHour)
 
             val distDetail = if (analysis.offer.pickupDistanceKm > 0.05 && analysis.offer.tripDistanceKm > 0.05) {
                 String.format(
                     Locale("pt", "BR"),
-                    "Busca %.1f + Viagem %.1f km",
+                    "Busca %.1f km • Viagem %.1f km (%d min)",
                     analysis.offer.pickupDistanceKm,
-                    analysis.offer.tripDistanceKm
+                    analysis.offer.tripDistanceKm,
+                    analysis.offer.totalMinutes
                 )
             } else {
-                String.format(Locale("pt", "BR"), "%.1f km total", analysis.offer.totalDistanceKm)
+                String.format(Locale("pt", "BR"), "%.1f km total (%d min)", analysis.offer.totalDistanceKm, analysis.offer.totalMinutes)
             }
 
             footerDetailsView?.text = String.format(
                 Locale("pt", "BR"),
-                "Tarifa R$ %.2f • %s (%d min) • Comb. -R$ %.2f",
+                "Tarifa R$ %.2f • %s • Comb. -R$ %.2f",
                 analysis.offer.fareBRL,
                 distDetail,
-                analysis.offer.totalMinutes,
                 analysis.fuelCostBRL
             )
 
-            val expandedWidth = dp(342)
+            val expandedWidth = dp(315)
             if (lp.width != expandedWidth) {
                 lp.width = expandedWidth
                 try {
