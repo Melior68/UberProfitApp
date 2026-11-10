@@ -60,10 +60,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
         activeInstance = this
         AppStateRepository.initIfNeeded(this)
         AppStateRepository.setAccessibilityConnected(true)
-        checkCurrentForegroundFromWindows()
         val s = AppStateRepository.settings.value
         if (s.isShiftReadingEnabled && s.visualAlertMode != VisualAlertMode.NOTIFICATION) {
             showOrUpdateOverlayInternal()
+            startHeartbeatIfNeeded()
         }
     }
 
@@ -97,36 +97,31 @@ class UberProfitAccessibilityService : AccessibilityService() {
         if (event == null) return
         if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
 
+        startHeartbeatIfNeeded()
+
         val pkgName = event.packageName?.toString() ?: ""
         if (pkgName == packageName) return
-        if (RideScreenParser.isIgnoredPackage(pkgName)) return
 
-        // Rastreia exatamente se a tela em primeiro plano é a 99 ou a Uber
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            currentForegroundPackage = pkgName
-            isRideAppForeground = RideScreenParser.isRideAppPackage(pkgName)
-            if (!isRideAppForeground) {
-                // Se o usuário saiu da Uber/99 e foi pro WhatsApp, tela inicial, etc., oculta a pílula flutuante
-                hideOverlayIfOutsideRideApps()
-                AppStateRepository.clearActiveCard(this)
-                return
-            } else {
-                // Ao voltar para a 99 ou Uber, reexibe a pílula
-                showOverlayIfInsideRideApps()
-            }
-        }
-
-        // Se o evento não for da Uber ou 99, mas a 99/Uber já estiver em primeiro plano,
-        // não bloqueia o processamento da tela da 99!
-        val isEventFromRideApp = RideScreenParser.isRideAppPackage(pkgName)
-        if (!isEventFromRideApp && !isRideAppForeground) {
+        // Se uma janela de captura de print (SmartCapture) acabou de abrir, marca timestamp para evitar ler card cortado
+        val pkgLower = pkgName.lowercase()
+        if (pkgLower.contains("smartcapture") || pkgLower.contains("screenshot") || pkgLower.contains("markup")) {
+            lastScreenshotOverlayMillis = System.currentTimeMillis()
             return
         }
 
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            // Ignora eventos de janela da SystemUI (barra de status/volume/notificação) ao rastrear o app principal
+            if (pkgName.isNotEmpty() && !pkgLower.contains("systemui") && !pkgLower.contains("inputmethod") && !pkgLower.contains("keyboard")) {
+                lastApplicationPackage = pkgName
+            }
+        }
+
+        if (RideScreenParser.isIgnoredPackage(pkgName)) return
+
         val nowSec = System.currentTimeMillis() / 1000.0
 
-        // 1. Detecta clique no botão "Aceitar" enquanto uma oferta estava visível
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+        // 1. Detecta clique no botão "Aceitar" / "Escolher" enquanto uma oferta estava visível
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED && RideScreenParser.isRideAppPackage(pkgName)) {
             val clickedText = buildString {
                 event.text.forEach { append(it).append(" ") }
                 event.contentDescription?.let { append(it) }
@@ -135,7 +130,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
             if (!didSendAcceptedForLastOffer &&
                 lastValidOfferSeenTimeSec > 0 &&
                 (nowSec - lastValidOfferSeenTimeSec) <= 25.0 &&
-                (clickedText.contains("ACEITAR") || clickedText.contains("TOQUE PARA ACEITAR"))
+                (clickedText.contains("ACEITAR") || clickedText.contains("TOQUE PARA ACEITAR") || clickedText.contains("ESCOLHER"))
             ) {
                 didSendAcceptedForLastOffer = true
                 didSendClearCard = true
@@ -145,67 +140,134 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
         }
 
-        // 2. Captura nós anexados diretamente ao evento (crucial para 99 quando o card fica em janela secundária)
-        try {
-            event.source?.let { src ->
-                cacheEventSourceNode(src, pkgName)
-            }
-        } catch (_: Exception) {
-        }
-
+        // 2. Captura nós anexados diretamente ao evento da 99/Uber
         if (RideScreenParser.isRideAppPackage(pkgName)) {
             lastRideAppEventMillis = System.currentTimeMillis()
-            startHeartbeatIfNeeded()
+            lastApplicationPackage = pkgName
+            try {
+                event.source?.let { src ->
+                    cacheEventSourceNode(src, pkgName)
+                }
+            } catch (_: Exception) {
+            }
+        } else {
+            // Se o evento não veio da 99/Uber e a 99/Uber não está visível na tela, ignora sem esconder a pílula!
+            val ctx = detectVisibleRideAppWindow()
+            if (!ctx.isRideAppVisible) return
         }
 
-        // Trailing debounce: sempre agenda uma varredura ~250ms após o ÚLTIMO evento.
+        // Trailing debounce: agenda varredura após o evento
         mainHandler.removeCallbacks(scanRunnable)
         val nowMillis = System.currentTimeMillis()
-        if (nowMillis - lastProcessedMillis >= 500L) {
+        if (nowMillis - lastProcessedMillis >= 480L) {
             performScan()
         } else {
-            mainHandler.postDelayed(scanRunnable, 220L)
+            mainHandler.postDelayed(scanRunnable, 200L)
         }
     }
 
     private var lastRideAppEventMillis: Long = 0L
-    private fun hideOverlayIfOutsideRideApps() {
-        mainHandler.post {
-            val view = rootContainer ?: return@post
-            view.visibility = View.GONE
-        }
-    }
-
-    private fun showOverlayIfInsideRideApps() {
-        mainHandler.post {
-            val view = rootContainer ?: return@post
-            view.visibility = View.VISIBLE
-            updateOverlayContentInternal()
-        }
-    }
-
-    private fun checkCurrentForegroundFromWindows() {
-        try {
-            val wins = windows ?: return
-            for (win in wins) {
-                if (win.isFocused || win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
-                    val root = win.root ?: continue
-                    val pkg = root.packageName?.toString() ?: continue
-                    if (RideScreenParser.isRideAppPackage(pkg)) {
-                        isRideAppForeground = true
-                        currentForegroundPackage = pkg
-                        showOverlayIfInsideRideApps()
-                        return
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-    }
-    private var isRideAppForeground = false
-    private var currentForegroundPackage = ""
+    private var lastScreenshotOverlayMillis: Long = 0L
+    private var lastApplicationPackage: String = ""
     private var heartbeatRunning = false
     private val cachedEventLines = mutableListOf<ScreenTextLine>()
     private var lastCachedEventMillis: Long = 0L
+
+    private data class RideWindowContext(
+        val isRideAppVisible: Boolean,
+        val ridePackageName: String?,
+        val rideWindowBounds: Rect?,
+        val hasObstructingOverlay: Boolean
+    )
+
+    /**
+     * Verifica diretamente nas janelas do Android se a interface da 99 ou da Uber está na tela,
+     * sem nunca esconder a pílula flutuante e ignorando outros apps.
+     */
+    private fun detectVisibleRideAppWindow(): RideWindowContext {
+        var foundRidePkg: String? = null
+        var foundRideBounds: Rect? = null
+        var hasObstruction = (System.currentTimeMillis() - lastScreenshotOverlayMillis) < 2200L
+
+        try {
+            val activeRoot = rootInActiveWindow
+            val activePkg = activeRoot?.packageName?.toString()
+            if (activePkg == packageName) {
+                // O próprio app UberProfit está aberto na tela
+                return RideWindowContext(false, null, null, false)
+            }
+            if (RideScreenParser.isRideAppPackage(activePkg)) {
+                foundRidePkg = activePkg
+                val b = Rect()
+                try { activeRoot?.getBoundsInScreen(b) } catch (_: Exception) {}
+                if (!b.isEmpty) foundRideBounds = b
+            }
+        } catch (_: Exception) {
+        }
+
+        var windowsAvailable = false
+        try {
+            val winList = windows
+            if (!winList.isNullOrEmpty()) {
+                windowsAvailable = true
+                for (win in winList) {
+                    val r = try { win.root } catch (_: Exception) { null } ?: continue
+                    val pkg = r.packageName?.toString() ?: continue
+                    val pkgLow = pkg.lowercase()
+
+                    if (pkgLow.contains("smartcapture") || pkgLow.contains("screenshot") || pkgLow.contains("markup")) {
+                        hasObstruction = true
+                    }
+
+                    if (win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                        if (pkg == packageName) {
+                            return RideWindowContext(false, null, null, false)
+                        }
+                        if (RideScreenParser.isRideAppPackage(pkg)) {
+                            foundRidePkg = pkg
+                            val b = Rect()
+                            try { win.getBoundsInScreen(b) } catch (_: Exception) {}
+                            if (!b.isEmpty) foundRideBounds = b
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // Fallback caso a lista de janelas esteja em transição mas o app ativo seja 99/Uber
+        if (foundRidePkg == null && !windowsAvailable && RideScreenParser.isRideAppPackage(lastApplicationPackage)) {
+            foundRidePkg = lastApplicationPackage
+        }
+
+        return RideWindowContext(
+            isRideAppVisible = foundRidePkg != null,
+            ridePackageName = foundRidePkg,
+            rideWindowBounds = foundRideBounds,
+            hasObstructingOverlay = hasObstruction
+        )
+    }
+
+    /**
+     * Retorna a posição exata da nossa Pílula/Card Flutuante na tela (onde quer que o motorista a tenha arrastado),
+     * garantindo que o OCR e o leitor NUNCA leiam os próprios números do nosso card.
+     */
+    private fun getOverlayBoundsOnScreen(): Rect? {
+        val view = rootContainer ?: return null
+        if (!view.isShown || view.width <= 0 || view.height <= 0) return null
+        val loc = IntArray(2)
+        return try {
+            view.getLocationOnScreen(loc)
+            Rect(
+                loc[0] - 24,
+                loc[1] - 24,
+                loc[0] + view.width + 24,
+                loc[1] + view.height + 24
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private fun cacheEventSourceNode(sourceNode: AccessibilityNodeInfo, pkgName: String?) {
         if (!RideScreenParser.isRideAppPackage(pkgName)) return
@@ -213,7 +275,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
         if (now - lastCachedEventMillis > 3500L) {
             cachedEventLines.clear()
         }
-        // Sobe até o topo dessa sub-árvore para pegar todo o card caso o evento venha de um filho
+        val overlayRect = getOverlayBoundsOnScreen()
         var topNode: AccessibilityNodeInfo = sourceNode
         var hops = 0
         while (hops < 15) {
@@ -222,7 +284,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
             hops++
         }
         val lines = mutableListOf<ScreenTextLine>()
-        collectTextLines(topNode, lines, requireVisible = false, depth = 0)
+        collectTextLines(topNode, lines, requireVisible = false, depth = 0, overlayRect = overlayRect)
         if (lines.any { it.text.contains("R$") || it.text.contains("km", ignoreCase = true) || it.text.contains("min", ignoreCase = true) }) {
             cachedEventLines.clear()
             cachedEventLines.addAll(lines)
@@ -232,13 +294,12 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
     private val scanRunnable = Runnable { performScan() }
 
-    // Varredura periódica leve (a cada 1,2s) enquanto a Uber/99 está em uso,
-    // para pegar ofertas mesmo quando o app não dispara eventos de acessibilidade.
+    // Varredura periódica contínua (a cada 1,2s) enquanto o leitor estiver LIGADO.
+    // Nunca desliga sozinha após 2 min de espera — assim que tocar corrida na 99 ou Uber, ela detecta na hora!
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
             val s = AppStateRepository.settings.value
-            val idleMs = System.currentTimeMillis() - lastRideAppEventMillis
-            if (!s.isShiftReadingEnabled || idleMs > 120_000L) {
+            if (!s.isShiftReadingEnabled) {
                 heartbeatRunning = false
                 return
             }
@@ -250,25 +311,28 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private fun startHeartbeatIfNeeded() {
         if (heartbeatRunning) return
         heartbeatRunning = true
-        mainHandler.postDelayed(heartbeatRunnable, 1200L)
+        mainHandler.postDelayed(heartbeatRunnable, 1000L)
     }
 
     private var isOcrProcessing = false
     private var lastOcrMillis = 0L
 
     /**
-     * OCR Visual Direto via Google ML Kit: Captura a tela e extrai os textos visíveis.
-     * Funciona mesmo que a 99 use Flutter, Canvas ou bloqueie a árvore de Acessibilidade!
+     * OCR Visual Direto via Google ML Kit: Captura a tela e extrai os textos visíveis SOMENTE da janela da 99/Uber,
+     * excluindo a área da nossa pílula flutuante (em qualquer posição da tela) e barras de print.
      */
-    private fun tryVisualOcrScan(nowSec: Double) {
+    private fun tryVisualOcrScan(nowSec: Double, rideCtx: RideWindowContext) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        if (!isRideAppForeground) return
+        if (!rideCtx.isRideAppVisible || rideCtx.hasObstructingOverlay) return
         if (isOcrProcessing) return
         val now = System.currentTimeMillis()
-        if (now - lastOcrMillis < 1200L) return
+        if (now - lastOcrMillis < 1150L) return
 
         isOcrProcessing = true
         lastOcrMillis = now
+        val overlayRectSnapshot = getOverlayBoundsOnScreen()
+        val rideBoundsSnapshot = rideCtx.rideWindowBounds
+        val targetPkg = rideCtx.ridePackageName ?: "com.app99.driver"
 
         try {
             takeScreenshot(
@@ -292,7 +356,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                             return
                         }
 
-                        // Processa com Google ML Kit Text Recognition
+                        val currentOverlayRect = getOverlayBoundsOnScreen() ?: overlayRectSnapshot
                         val inputImage = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
                         val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
                             com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
@@ -308,33 +372,42 @@ class UberProfitAccessibilityService : AccessibilityService() {
                                         val left = box?.left ?: 0
                                         val height = box?.height() ?: 24
                                         val norm = normalizeText(line.text)
-                                        if (norm.isNotEmpty()) {
-                                            ocrLines.add(ScreenTextLine(text = norm, topY = top, leftX = left, height = height))
+                                        if (norm.isEmpty()) continue
+
+                                        // 1. Exclui barra de status do topo
+                                        if (top <= 110) continue
+
+                                        // 2. Exclui qualquer texto dentro da área atual da nossa Pílula/Card Flutuante
+                                        if (box != null && currentOverlayRect != null && Rect.intersects(box, currentOverlayRect)) {
+                                            continue
                                         }
+
+                                        // 3. Se soubermos os limites da janela da 99/Uber, lê apenas dentro dela
+                                        if (box != null && rideBoundsSnapshot != null && !rideBoundsSnapshot.isEmpty) {
+                                            if (!rideBoundsSnapshot.contains(box.centerX(), box.centerY())) {
+                                                continue
+                                            }
+                                        }
+
+                                        ocrLines.add(ScreenTextLine(text = norm, topY = top, leftX = left, height = height))
                                     }
                                 }
 
                                 if (ocrLines.isNotEmpty()) {
-                                    // FILTRA: 
-                                    // 1. Remove qualquer texto no topo onde fica a pílula (topY <= 230)
-                                    // 2. Remove qualquer linha com termos do nosso app
-                                    // 3. Remove menus flutuantes de print/screenshot do sistema Samsung (rodapé inferior)
                                     val filteredOcr = ocrLines.filter { item ->
-                                        val isNotOurFloatingZone = item.topY > 230
                                         val isNotSelfOverlay = !RideScreenParser.isSelfOverlayLine(item.text)
-                                        val isNotScreenshotMenu = !item.text.contains("Captura") && 
-                                            !item.text.contains("Compartilhar") && 
-                                            !item.text.contains("Editar") && 
+                                        val isNotScreenshotMenu = !item.text.contains("Captura") &&
+                                            !item.text.contains("Compartilhar") &&
+                                            !item.text.contains("Editar") &&
                                             !item.text.contains("Salvar")
-                                        isNotOurFloatingZone && isNotSelfOverlay && isNotScreenshotMenu
+                                        isNotSelfOverlay && isNotScreenshotMenu
                                     }
 
                                     val sortedOcr = filteredOcr.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
                                     val fullOcrText = sortedOcr.joinToString("\n") { it.text }
 
-                                    // Só prossegue se tiver elementos de oferta ou de app de corrida
-                                    if (!RideScreenParser.isInsideOwnAppOrHistoryScreen(fullOcrText, null)) {
-                                        val payload = RideScreenParser.parseRideCard(sortedOcr, "com.app99.driver", nowSec)
+                                    if (!RideScreenParser.isInsideOwnAppOrHistoryScreen(fullOcrText, targetPkg)) {
+                                        val payload = RideScreenParser.parseRideCard(sortedOcr, targetPkg, nowSec)
 
                                         if (payload != null) {
                                             val ocrDump = "👁️ [OCR VISUAL ML KIT - OFERTA DETECTADA]\n$fullOcrText"
@@ -368,11 +441,19 @@ class UberProfitAccessibilityService : AccessibilityService() {
         lastProcessedMillis = System.currentTimeMillis()
         val nowSec = lastProcessedMillis / 1000.0
 
+        val rideCtx = detectVisibleRideAppWindow()
+        if (!rideCtx.isRideAppVisible || rideCtx.hasObstructingOverlay) {
+            // Se não estiver na tela da 99/Uber, mantém a pílula visível, mas não lê outros apps!
+            checkAndClearStaleCard(nowSec)
+            return
+        }
+
+        val overlayRect = getOverlayBoundsOnScreen()
         var detectedPayload: RideOfferPayload? = null
         var activeScreenText = ""
         val dump = StringBuilder()
 
-        // Junta a janela ativa + todas as janelas interativas (cards da Uber/99 por cima do Waze/Maps)
+        // Coleta SOMENTE janelas da Uber e da 99
         val roots = mutableListOf<AccessibilityNodeInfo>()
         try {
             rootInActiveWindow?.let { roots.add(it) }
@@ -390,14 +471,16 @@ class UberProfitAccessibilityService : AccessibilityService() {
         for ((idx, root) in roots.withIndex()) {
             try { root.refresh() } catch (_: Exception) {}
             val rootPkg = root.packageName?.toString()
-            if (rootPkg == packageName || RideScreenParser.isIgnoredPackage(rootPkg)) continue
+            // REGRA DE OURO: Lê EXCLUSIVAMENTE pacotes da Uber ou 99! Ignora qualquer outro app/sobreposição.
+            if (!RideScreenParser.isRideAppPackage(rootPkg)) continue
+
             val rootBounds = Rect()
             try { root.getBoundsInScreen(rootBounds) } catch (_: Exception) {}
             val key = "${rootPkg}_${root.windowId}_${root.className}_${rootBounds.top}_${rootBounds.bottom}_$idx"
             if (!seenKeys.add(key)) continue
 
-            val res = inspectWindowNode(root, rootPkg, nowSec)
-            if (RideScreenParser.isRideAppPackage(rootPkg) && res.second.isNotEmpty()) {
+            val res = inspectWindowNode(root, rootPkg, nowSec, overlayRect)
+            if (res.second.isNotEmpty()) {
                 dump.append("📦 ").append(rootPkg).append(" (win=").append(root.windowId).append(")\n").append(res.second).append("\n\n")
             }
             if (res.second.isNotEmpty() && activeScreenText.isEmpty()) {
@@ -410,7 +493,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Se as janelas raízes (ex: Dialog "Erro de rede") cobriram o card, analisa os nós capturados direto do evento!
+        // Se as janelas raízes (ex: Dialog "Erro de rede") cobriram o card, analisa os nós capturados direto do evento da 99/Uber!
         if (detectedPayload == null &&
             cachedEventLines.isNotEmpty() &&
             (lastProcessedMillis - lastCachedEventMillis) <= 3500L
@@ -418,7 +501,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
             val sortedCached = cachedEventLines.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
             val cachedText = sortedCached.joinToString("\n") { it.text }
             val cleanCached = sortedCached.filterNot { RideScreenParser.isSelfOverlayLine(it.text) }
-            val cachedPayload = RideScreenParser.parseRideCard(cleanCached, "com.app99.driver", nowSec)
+            val cachedPayload = RideScreenParser.parseRideCard(cleanCached, rideCtx.ridePackageName ?: "com.app99.driver", nowSec)
             if (cachedText.isNotEmpty()) {
                 dump.append("📦 event.source (cache recente)\n").append(cachedText).append("\n\n")
             }
@@ -450,10 +533,8 @@ class UberProfitAccessibilityService : AccessibilityService() {
         }
 
         if (detectedPayload == null) {
-            // Roda o OCR Visual ML Kit da tela SOMENTE se estivermos com a Uber ou 99 em primeiro plano!
-            if (isRideAppForeground) {
-                tryVisualOcrScan(nowSec)
-            }
+            // Roda o OCR Visual ML Kit focado na janela da 99/Uber
+            tryVisualOcrScan(nowSec, rideCtx)
 
             if (!didSendAcceptedForLastOffer &&
                 lastValidOfferSeenTimeSec > 0 &&
@@ -503,15 +584,16 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private fun inspectWindowNode(
         rootNode: AccessibilityNodeInfo,
         pkgName: String?,
-        nowSec: Double
+        nowSec: Double,
+        overlayRect: Rect?
     ): Pair<RideOfferPayload?, String> {
         val collectedLines = mutableListOf<ScreenTextLine>()
         val is99Pkg = pkgName?.lowercase()?.let { it.contains("99") || it.contains("didi") || it.contains("taxis") } == true
-        collectTextLines(rootNode, collectedLines, requireVisible = !is99Pkg, depth = 0)
+        collectTextLines(rootNode, collectedLines, requireVisible = !is99Pkg, depth = 0, overlayRect = overlayRect)
         // Se para outros apps de corrida não achamos "R$", tenta sem filtro de visibilidade também
         if (!is99Pkg && RideScreenParser.isRideAppPackage(pkgName) && collectedLines.none { it.text.contains("R$") }) {
             collectedLines.clear()
-            collectTextLines(rootNode, collectedLines, requireVisible = false, depth = 0)
+            collectTextLines(rootNode, collectedLines, requireVisible = false, depth = 0, overlayRect = overlayRect)
         }
         if (collectedLines.isEmpty()) return Pair(null, "")
 
@@ -522,8 +604,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
             return Pair(null, "")
         }
 
-        // Filtra zona do nosso overlay flutuante (topY <= 230) e linhas com termos próprios
-        val cleanCardLines = sortedLines.filter { it.topY > 230 && !RideScreenParser.isSelfOverlayLine(it.text) }
+        val cleanCardLines = sortedLines.filter { it.topY > 110 && !RideScreenParser.isSelfOverlayLine(it.text) }
         val payload = RideScreenParser.parseRideCard(cleanCardLines, pkgName, nowSec)
         return Pair(payload, allScreenText)
     }
@@ -532,7 +613,8 @@ class UberProfitAccessibilityService : AccessibilityService() {
         node: AccessibilityNodeInfo?,
         output: MutableList<ScreenTextLine>,
         requireVisible: Boolean,
-        depth: Int
+        depth: Int,
+        overlayRect: Rect?
     ) {
         if (node == null || depth > 70 || output.size > 750) return
         if (requireVisible && !node.isVisibleToUser) return
@@ -540,10 +622,14 @@ class UberProfitAccessibilityService : AccessibilityService() {
         val rect = Rect()
         try { node.getBoundsInScreen(rect) } catch (_: Exception) {}
 
+        // Se o nó estiver dentro da área da nossa pílula flutuante, ignora!
+        if (!rect.isEmpty && overlayRect != null && Rect.intersects(rect, overlayRect)) {
+            return
+        }
+
         val rawText = node.text?.toString()?.let { normalizeText(it) }
         val rawDesc = node.contentDescription?.toString()?.let { normalizeText(it) }
 
-        // Lê o texto E a descrição (mesmo que o container tenha bounds 0x0, ainda descemos nos filhos)
         val safeTopY = if (rect.top > 0) rect.top else (depth * 14)
         val safeHeight = if (rect.height() > 0) rect.height().coerceAtLeast(12) else 24
         val safeLeftX = if (rect.left >= 0) rect.left else 0
@@ -563,7 +649,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 null
             }
             if (child != null) {
-                collectTextLines(child, output, requireVisible, depth + 1)
+                collectTextLines(child, output, requireVisible, depth + 1, overlayRect)
             }
         }
     }
@@ -801,6 +887,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
     private fun updateOverlayContentInternal() {
         mainHandler.post {
             val card = rootContainer ?: return@post
+            card.visibility = View.VISIBLE
             val lp = layoutParams ?: return@post
             val density = resources.displayMetrics.density
             fun dp(value: Int): Int = (value * density).toInt()
@@ -808,7 +895,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
             val analysis = AppStateRepository.latestAnalysis.value
             val settings = AppStateRepository.settings.value
 
-            // MODO 1: PÍLULA COMPACTA DISCRETA (Quando não há oferta tocando na tela)
+            // MODO 1: PÍLULA COMPACTA DISCRETA COM MÉTRICAS DO DIA (Sem poluição visual)
             if (analysis == null) {
                 card.setPadding(dp(12), dp(6), dp(12), dp(6))
                 card.background = buildRoundedBackground(
@@ -818,17 +905,19 @@ class UberProfitAccessibilityService : AccessibilityService() {
                     dp(1.5f.toInt())
                 )
                 
-                // Métricas do Turno em tempo real (Ganhos Acumulados / Corridas Aceitas)
+                // Métricas do Dia em tempo real (Ganhos Acumulados / Lucro / Corridas Aceitas)
                 val acceptedRides = AppStateRepository.acceptedRides.value
                 val totalGross = acceptedRides.sumOf { it.offer.fareBRL }
+                val totalNet = acceptedRides.sumOf { it.netProfitBRL }
                 val acceptedCount = acceptedRides.size
                 val targetStr = String.format(Locale("pt", "BR"), "%.2f", settings.targetBRLPerKm)
                 
                 val statusText = if (acceptedCount > 0) {
                     val grossStr = String.format(Locale("pt", "BR"), "%.2f", totalGross)
-                    "🟢 R$ $grossStr ($acceptedCount) • Meta R$ $targetStr/km"
+                    val netStr = String.format(Locale("pt", "BR"), "%.2f", totalNet)
+                    "🟢 Dia: R$ $grossStr ($acceptedCount) • Lucro R$ $netStr"
                 } else {
-                    "🟢 Profit Ativo • Meta R$ $targetStr/km"
+                    "🟢 Dia: R$ 0,00 (0) • Meta R$ $targetStr/km"
                 }
 
                 headerBadgeView?.text = statusText
@@ -837,7 +926,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 metricsRowContainer?.visibility = View.GONE
                 footerDetailsView?.visibility = View.GONE
 
-                val targetWidth = if (acceptedCount > 0) dp(305) else dp(285)
+                val targetWidth = dp(308)
                 if (lp.width != targetWidth) {
                     lp.width = targetWidth
                     try {
@@ -951,7 +1040,9 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
         fun showOrUpdateOffer() {
             if (!AppStateRepository.settings.value.isShiftReadingEnabled) return
-            activeInstance?.showOrUpdateOverlayInternal()
+            val inst = activeInstance ?: return
+            inst.showOrUpdateOverlayInternal()
+            inst.startHeartbeatIfNeeded()
         }
 
         fun hideOverlayFromMasterSwitch() {
@@ -973,6 +1064,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
                 AppStateRepository.setOverlayActive(false)
             } else {
                 inst.showOrUpdateOverlayInternal()
+                inst.startHeartbeatIfNeeded()
             }
             return true
         }

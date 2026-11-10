@@ -13,9 +13,9 @@ data class ScreenTextLine(
 
 object RideScreenParser {
 
-    // Aceita "R$ 22,80", "R$22.80", "RS 15,00" e também quando o R$ está separado por espaço/quebra
+    // Aceita "R$ 22,80", "R$22.80", "RS 15,00" e ignora valores precedidos por "+" ou "-" (ex: Comb. -R$ 4,13)
     private val pricePattern: Pattern = Pattern.compile(
-        """(?<!\+)(?:R\s*\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)""",
+        """(?<![+\-−–])(?:R\s*\$|RS)\s*(\d{1,3}(?:[.,]\d{2}))(?!\s*/)""",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -43,9 +43,12 @@ object RideScreenParser {
         Pattern.CASE_INSENSITIVE
     )
 
-    // Pacotes de sistema ou apps comuns que NUNCA devem ser lidos se não houver sobreposição da Uber/99
+    // Pacotes de sistema ou apps comuns que NUNCA devem ser lidos
     private val ignoredPackages = setOf(
         "com.uberprofit.auto",
+        "com.samsung.android.app.smartcapture",
+        "com.google.android.markup",
+        "com.sec.android.gallery3d",
         "com.whatsapp",
         "com.whatsapp.w4b",
         "com.instagram.android",
@@ -62,7 +65,11 @@ object RideScreenParser {
 
     fun isIgnoredPackage(packageName: String?): Boolean {
         if (packageName.isNullOrBlank()) return false
-        return ignoredPackages.contains(packageName.lowercase())
+        val p = packageName.lowercase()
+        return ignoredPackages.contains(p) ||
+            p.contains("smartcapture") ||
+            p.contains("screenshot") ||
+            p.contains("markup")
     }
 
     /** Pacotes da Uber Driver (com.ubercab.driver), 99 Motorista (com.app99.driver / com.taxis99) e DiDi. */
@@ -116,14 +123,22 @@ object RideScreenParser {
         val upper = line.uppercase()
         return upper.contains("PROFIT ATIVO") ||
             upper.contains("UBERPROFIT") ||
+            upper.contains("DIA: R$") ||
+            upper.contains("HOJE: R$") ||
+            upper.contains("META R$") ||
+            upper.contains("META ") ||
             upper.contains("LUCRO R$") ||
             upper.contains("LUCRO LIVRE") ||
             upper.contains("COMB. -R$") ||
+            upper.contains("COMB.") ||
+            upper.contains("-R$") ||
             upper.contains("GASOLINA: -R$") ||
             upper.contains("KM TOTAL") ||
+            upper.contains("BUSCA ") ||
             upper.contains("MONITORANDO OFERTAS") ||
             upper.contains("ACEITEI CORRIDA") ||
             upper.contains("ACEITEI") ||
+            upper.contains("✓ SALVA") ||
             upper.contains("TARIFA R$") ||
             upper.contains("RECUSAR") ||
             upper.contains("ATENÇÃO") ||
@@ -222,11 +237,12 @@ object RideScreenParser {
         if (fare < 4.5 || fare > 950.0) return null
 
         // 3. Extrai Distâncias e Tempos do Card em foco
-        val stepsResult = extractStructuredSteps(targetFullText, fare).takeIf { it.totalKm > 0.3 }
+        val stepsResult = extractStructuredSteps(targetFullText, fare).takeIf { it.totalKm > 0.3 && it.stepCount >= 2 }
             ?: extractStructuredSteps(fullText, fare)
 
-        // Proteção contra a gaveta recolhida "Solicitações / Buscando" da 99 com segunda linha cortada
-        if (isCollapsed99Drawer && stepsResult.stepCount < 2) {
+        // Proteção contra leituras parciais (ex: quando print/notificação cobre uma das linhas de endereço)
+        // Todo card completo da 99 ou Uber possui os 2 trechos (busca + viagem), linha de resumo ou selo R$/km.
+        if (stepsResult.stepCount < 2) {
             return null
         }
 
@@ -407,20 +423,32 @@ object RideScreenParser {
             return StepsResult(0.0, summaryResult.second, summaryResult.second, 0, summaryResult.first, summaryResult.first, 2)
         }
 
-        val onlyStep = uniqueSteps.firstOrNull()
-        if (onlyStep != null) {
-            return StepsResult(0.0, onlyStep.second, onlyStep.second, 0, onlyStep.first, onlyStep.first, 1)
-        }
-
-        // Fallback para cards da 99 onde o Android retorna apenas "R$17,50" e "R$2,04/km"
+        // Fallback para cards da 99 onde o card exibe o selo "R$2,04/km" (mesmo se 1 linha de endereço estiver coberta)
         val rateMatcher = ratePerKmPattern.matcher(fullText)
         if (rateMatcher.find() && fareBRL > 0) {
             val ratePerKm = rateMatcher.group(1)?.replace(",", ".")?.toDoubleOrNull() ?: 0.0
             if (ratePerKm >= 0.4) {
                 val estTotalKm = (fareBRL / ratePerKm).coerceIn(0.5, 250.0)
                 val estTotalMin = max((estTotalKm * 2.4).toInt(), 3)
+                val firstStep = uniqueSteps.firstOrNull()
+                if (firstStep != null && estTotalKm > firstStep.second) {
+                    return StepsResult(
+                        pickupKm = firstStep.second,
+                        tripKm = estTotalKm - firstStep.second,
+                        totalKm = estTotalKm,
+                        pickupMin = firstStep.first,
+                        tripMin = max(estTotalMin - firstStep.first, 1),
+                        totalMin = estTotalMin,
+                        stepCount = 2
+                    )
+                }
                 return StepsResult(0.0, estTotalKm, estTotalKm, 0, estTotalMin, estTotalMin, 2)
             }
+        }
+
+        val onlyStep = uniqueSteps.firstOrNull()
+        if (onlyStep != null) {
+            return StepsResult(0.0, onlyStep.second, onlyStep.second, 0, onlyStep.first, onlyStep.first, 1)
         }
 
         return StepsResult(0.0, 0.0, 0.0, 0, 0, 0, 0)
