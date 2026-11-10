@@ -102,16 +102,24 @@ class UberProfitAccessibilityService : AccessibilityService() {
 
         // Rastreia exatamente se a tela em primeiro plano é a 99 ou a Uber
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val wasRideApp = isRideAppForeground
             currentForegroundPackage = pkgName
             isRideAppForeground = RideScreenParser.isRideAppPackage(pkgName)
             if (!isRideAppForeground) {
-                // Se o usuário saiu da Uber/99 e foi pro WhatsApp, tela inicial, etc., oculta a pílula flutuante!
+                // Se o usuário saiu da Uber/99 e foi pro WhatsApp, tela inicial, etc., oculta a pílula flutuante
+                // e limpa qualquer oferta anterior da tela!
                 hideOverlayIfOutsideRideApps()
+                AppStateRepository.clearActiveCard(this)
                 return
             } else {
                 // Ao voltar para a 99 ou Uber, reexibe a pílula
                 showOverlayIfInsideRideApps()
             }
+        }
+
+        // Se o evento vier de outro app (ex: notificação do Facebook/WhatsApp aparecendo por cima), ignora completamente!
+        if (!RideScreenParser.isRideAppPackage(pkgName)) {
+            return
         }
 
         val nowSec = System.currentTimeMillis() / 1000.0
@@ -235,6 +243,7 @@ class UberProfitAccessibilityService : AccessibilityService() {
      */
     private fun tryVisualOcrScan(nowSec: Double) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (!isRideAppForeground) return
         if (isOcrProcessing) return
         val now = System.currentTimeMillis()
         if (now - lastOcrMillis < 1200L) return
@@ -287,13 +296,18 @@ class UberProfitAccessibilityService : AccessibilityService() {
                                 }
 
                                 if (ocrLines.isNotEmpty()) {
-                                    // FILTRA: Remove textos que estejam no topo onde fica a nossa Pílula Flutuante (topY < 240)
-                                    // ou que contenham palavras do nosso próprio card flutuante
+                                    // FILTRA: 
+                                    // 1. Remove qualquer texto no topo onde fica a pílula (topY <= 230)
+                                    // 2. Remove qualquer linha com termos do nosso app
+                                    // 3. Remove menus flutuantes de print/screenshot do sistema Samsung (rodapé inferior)
                                     val filteredOcr = ocrLines.filter { item ->
-                                        // A nossa pílula fica no topo (y < 230). O card da corrida da 99/Uber fica da metade para baixo (y > 300)
-                    val isNotOurFloatingZone = item.topY > 230
-                    val isNotSelfOverlay = !RideScreenParser.isSelfOverlayLine(item.text)
-                    isNotOurFloatingZone && isNotSelfOverlay
+                                        val isNotOurFloatingZone = item.topY > 230
+                                        val isNotSelfOverlay = !RideScreenParser.isSelfOverlayLine(item.text)
+                                        val isNotScreenshotMenu = !item.text.contains("Captura") && 
+                                            !item.text.contains("Compartilhar") && 
+                                            !item.text.contains("Editar") && 
+                                            !item.text.contains("Salvar")
+                                        isNotOurFloatingZone && isNotSelfOverlay && isNotScreenshotMenu
                                     }
 
                                     val sortedOcr = filteredOcr.sortedWith(compareBy<ScreenTextLine> { it.topY }.thenBy { it.leftX })
@@ -417,8 +431,10 @@ class UberProfitAccessibilityService : AccessibilityService() {
         }
 
         if (detectedPayload == null) {
-            // Se a árvore de acessibilidade não detectou oferta, roda o OCR Visual ML Kit da tela!
-            tryVisualOcrScan(nowSec)
+            // Roda o OCR Visual ML Kit da tela SOMENTE se estivermos com a Uber ou 99 em primeiro plano!
+            if (isRideAppForeground) {
+                tryVisualOcrScan(nowSec)
+            }
 
             if (!didSendAcceptedForLastOffer &&
                 lastValidOfferSeenTimeSec > 0 &&
