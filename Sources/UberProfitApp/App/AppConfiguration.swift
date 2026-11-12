@@ -18,6 +18,25 @@ public final class AppConfiguration: ObservableObject {
     @AppStorage("visualAlertModeRaw") public var visualAlertModeRaw: String = VisualAlertMode.notificationOnly.rawValue
     @AppStorage("primaryMetricDisplayRaw") public var primaryMetricDisplayRaw: String = PrimaryMetricDisplay.gross.rawValue
     @AppStorage("showQuickGuide") public var showQuickGuide: Bool = true
-    
+
+    public var visualAlertMode: VisualAlertMode {
+        get { VisualAlertMode(rawValue: visualAlertModeRaw) ?? .notificationOnly }
+        set { visualAlertModeRaw = newValue.rawValue }
+    }
+
+    public var voiceSpeechStyle: VoiceSpeechStyle {
+        get { VoiceSpeechStyle(rawValue: voiceSpeechStyleRaw) ?? .full }
+        set { voiceSpeechStyleRaw = newValue.rawValue }
+    }
+
+    public var primaryMetricDisplay: PrimaryMetricDisplay {
+        get { PrimaryMetricDisplay(rawValue: primaryMetricDisplayRaw) ?? .gross }
+        set { primaryMetricDisplayRaw = newValue.rawValue }
+    }
+
+    public var fuelCostPerKm: Double {
+        fuelPriceBRLPerLiter / max(carConsumptionKmPerLiter, 1.0)
+    }
+
     public init() {}
 }

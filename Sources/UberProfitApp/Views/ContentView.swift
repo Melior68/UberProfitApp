@@ -105,8 +105,12 @@ public struct ContentView: View {
             .onAppear {
                 viewModel.startBackgroundServices()
             }
+            .sheet(item: $viewModel.selectedItemForOCRDebug) { item in
+                OCRDebugSheetView(item: item)
+            }
+            .sheet(isPresented: $viewModel.showAddManualRideSheet) {
+                AddManualRideSheetView(viewModel: viewModel)
+            }
         }
     }
-
 }
-
