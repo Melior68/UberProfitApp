@@ -58,24 +58,6 @@ public struct BroadcastPickerRepresentable: UIViewRepresentable {
     public func updateUIView(_ uiView: RPSystemBroadcastPickerView, context: Context) {}
 }
 
-private enum AppSectionTab: String, CaseIterable {
-    case operation = "Painel"
-    case earnings = "Ganhos"
-    case goals = "Metas"
-    case customize = "Alertas"
-    case history = "Histórico"
-
-    var icon: String {
-        switch self {
-        case .operation: return "bolt.car.fill"
-        case .earnings: return "dollarsign.circle.fill"
-        case .goals: return "slider.horizontal.3"
-        case .customize: return "paintbrush.pointed.fill"
-        case .history: return "clock.arrow.circlepath"
-        }
-    }
-}
-
 @MainActor
 public struct ContentView: View {
     @StateObject private var viewModel = ContentViewModel()

@@ -255,16 +255,22 @@ public struct EarningsTabView: View {
 
 public struct GoalsAndVehicleTabView: View {
     @ObservedObject var viewModel: ContentViewModel
+    @ObservedObject private var config: AppConfiguration
+
+    public init(viewModel: ContentViewModel) {
+        self.viewModel = viewModel
+        self._config = ObservedObject(wrappedValue: viewModel.config)
+    }
     
     public var body: some View {
         Form {
             Section(header: Text("Metas de Rentabilidade")) {
-                TextField("Meta R$/km", value: $viewModel.config.targetBRLPerKm, format: .number)
-                TextField("Meta R$/hora", value: $viewModel.config.targetBRLPerHour, format: .number)
+                TextField("Meta R$/km", value: $config.targetBRLPerKm, format: .number)
+                TextField("Meta R$/hora", value: $config.targetBRLPerHour, format: .number)
             }
             Section(header: Text("Veículo")) {
-                TextField("Consumo (km/L)", value: $viewModel.config.carConsumptionKmPerLiter, format: .number)
-                TextField("Preço Combustível (R$)", value: $viewModel.config.fuelPriceBRLPerLiter, format: .number)
+                TextField("Consumo (km/L)", value: $config.carConsumptionKmPerLiter, format: .number)
+                TextField("Preço Combustível (R$)", value: $config.fuelPriceBRLPerLiter, format: .number)
             }
         }
     }
@@ -272,14 +278,20 @@ public struct GoalsAndVehicleTabView: View {
 
 public struct CustomizationTabView: View {
     @ObservedObject var viewModel: ContentViewModel
+    @ObservedObject private var config: AppConfiguration
+
+    public init(viewModel: ContentViewModel) {
+        self.viewModel = viewModel
+        self._config = ObservedObject(wrappedValue: viewModel.config)
+    }
     
     public var body: some View {
         Form {
             Section(header: Text("Alertas de Voz")) {
-                Toggle("Ativar Voz", isOn: $viewModel.config.voiceAlertsEnabled)
+                Toggle("Ativar Voz", isOn: $config.voiceAlertsEnabled)
             }
             Section(header: Text("Exibição")) {
-                Toggle("Avaliar por Lucro Líquido", isOn: $viewModel.config.evaluateUsingNetProfit)
+                Toggle("Avaliar por Lucro Líquido", isOn: $config.evaluateUsingNetProfit)
             }
         }
     }

@@ -28,7 +28,7 @@ public final class ContentViewModel: ObservableObject {
     public let voiceManager = VoiceAlertManager()
     public let pipManager = PiPOverlayManager()
     public let notificationManager = NotificationAlertManager()
-    public let config = AppConfiguration()
+    @Published public var config = AppConfiguration()
     public let persistence = RidePersistenceService()
 
     // State
