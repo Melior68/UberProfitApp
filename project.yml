@@ -22,7 +22,7 @@ targets:
     sources:
       - path: Sources/UberProfitApp
     info:
-      path: Sources/UberProfitApp/Info.plist
+      path: Sources/UberProfitApp/Resources/Info.plist
       properties:
         CFBundleDisplayName: "UberProfit"
         CFBundleShortVersionString: "1.0.0"
@@ -44,7 +44,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.uberprofit.app
-        INFOPLIST_FILE: Sources/UberProfitApp/Info.plist
+        INFOPLIST_FILE: Sources/UberProfitApp/Resources/Info.plist
         ENABLE_BITCODE: "NO"
     dependencies:
       - target: ScreenReaderExtension

@@ -1,0 +1,18 @@
+# Builds e pacotes gerados localmente
+releases/
+build/
+*.ipa
+*.apk
+*.zip
+*.xcodeproj/
+*.xcworkspace/
+
+# macOS / Windows / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
