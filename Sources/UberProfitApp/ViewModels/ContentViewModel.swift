@@ -2,6 +2,24 @@ import Foundation
 import SwiftUI
 import AVKit
 
+public enum AppSectionTab: String, CaseIterable, Sendable {
+    case operation = "Painel"
+    case earnings = "Ganhos"
+    case goals = "Metas"
+    case customize = "Alertas"
+    case history = "Histórico"
+
+    public var icon: String {
+        switch self {
+        case .operation: return "bolt.car.fill"
+        case .earnings: return "dollarsign.circle.fill"
+        case .goals: return "slider.horizontal.3"
+        case .customize: return "paintbrush.pointed.fill"
+        case .history: return "clock.arrow.circlepath"
+        }
+    }
+}
+
 @MainActor
 public final class ContentViewModel: ObservableObject {
     // Services
@@ -46,6 +64,11 @@ public final class ContentViewModel: ObservableObject {
                 }
             }
         }
+        udpListener.onClearCardRequested = { [weak self] in
+            Task { @MainActor in
+                self?.latestAnalysis = nil
+            }
+        }
     }
 
     private func handleNewOffer(_ offer: RideOfferPayload) {
@@ -56,7 +79,7 @@ public final class ContentViewModel: ObservableObject {
         persistence.saveHistory(Array(history.prefix(100)))
 
         if config.voiceAlertsEnabled {
-            voiceManager.speak(analysis: analysis, style: config.voiceSpeechStyle)
+            voiceManager.announce(analysis: analysis, settings: currentSettings)
         }
     }
 

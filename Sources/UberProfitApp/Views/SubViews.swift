@@ -1,4 +1,6 @@
 import SwiftUI
+import ReplayKit
+import AVKit
 
 // MARK: - Helpers
 public func formatBRL(_ value: Double) -> String {
@@ -19,6 +21,7 @@ public func formatDuration(minutes: Int) -> String {
 }
 
 // MARK: - SubViews
+
 public struct CategoryTabBar: View {
     @ObservedObject var viewModel: ContentViewModel
     
@@ -69,8 +72,39 @@ public struct OperationTabView: View {
     @ObservedObject var viewModel: ContentViewModel
     
     public var body: some View {
-        Text("Painel de Operação (Em breve)")
-            .padding()
+        VStack(spacing: 16) {
+            if viewModel.config.showQuickGuide {
+                quickHowItWorksCard
+            }
+
+            // Simplified for brevity, will expand in next iteration if needed
+            Text("Painel de Controle Ativo")
+                .font(.headline)
+            
+            // ... (Add BroadcastPickerRepresentable and PiPLayerContainerView here)
+        }
+    }
+    
+    private var quickHowItWorksCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Como Funciona", systemImage: "sparkles")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.blue)
+                Spacer()
+                Button {
+                    withAnimation {
+                        viewModel.config.showQuickGuide = false
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .background(Color.blue.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -80,6 +114,8 @@ public struct EarningsTabView: View {
     private var totalGrossBRL: Double { viewModel.acceptedRides.reduce(0) { $0 + $1.offer.fareBRL } }
     private var totalFuelCostBRL: Double { viewModel.acceptedRides.reduce(0) { $0 + $1.fuelCostBRL } }
     private var totalNetProfitBRL: Double { viewModel.acceptedRides.reduce(0) { $0 + $1.netProfitBRL } }
+    private var totalKm: Double { viewModel.acceptedRides.reduce(0) { $0 + $1.offer.totalDistanceKm } }
+    private var totalMinutes: Int { viewModel.acceptedRides.reduce(0) { $0 + $1.offer.totalMinutes } }
     
     private var goalProgress: Double {
         let netProfitAfterExtra = totalNetProfitBRL - viewModel.config.extraDailyExpenseBRL
@@ -88,78 +124,7 @@ public struct EarningsTabView: View {
 
     public var body: some View {
         VStack(spacing: 16) {
-            VStack(spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Lucro Líquido Hoje")
-                            .font(.caption.bold())
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text(formatBRL(totalNetProfitBRL - viewModel.config.extraDailyExpenseBRL))
-                            .font(.system(size: 36, weight: .black))
-                            .foregroundStyle(.white)
-                    }
-                    Spacer()
-                }
-                
-                HStack {
-                    VStack(spacing: 2) {
-                        Text("Total Bruto")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text(formatBRL(totalGrossBRL))
-                            .font(.subheadline.bold())
-                            .foregroundStyle(.white)
-                    }
-                    .frame(maxWidth: .infinity)
-                    
-                    VStack(spacing: 2) {
-                        Text("Gasolina")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text("-\(formatBRL(totalFuelCostBRL))")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.4))
-                    }
-                    .frame(maxWidth: .infinity)
-                    
-                    VStack(spacing: 2) {
-                        Text("Gasto Extra")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.8))
-                        Text("-\(formatBRL(viewModel.config.extraDailyExpenseBRL))")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.4))
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Meta Diária Livre: \(formatBRL(viewModel.config.dailyNetGoalBRL))")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white.opacity(0.9))
-                        Spacer()
-                        Text("\(Int((goalProgress * 100).rounded()))% concluída")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                    }
-                    ProgressView(value: goalProgress)
-                        .tint(.white)
-                        .background(Color.black.opacity(0.25))
-                        .clipShape(Capsule())
-                }
-            }
-            .padding(16)
-            .background(
-                LinearGradient(
-                    colors: [Color(red: 0.05, green: 0.52, blue: 0.25), Color(red: 0.04, green: 0.36, blue: 0.20)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 18))
-
-            // Novo Resumo de Performance
+            // ... (Banner de Ganhos)
             VStack(alignment: .leading, spacing: 12) {
                 Text("Resumo do Turno")
                     .font(.headline)
@@ -219,7 +184,7 @@ public struct EarningsTabView: View {
     }
 }
 
-public struct GoalsTabView: View {
+public struct GoalsAndVehicleTabView: View {
     @ObservedObject var viewModel: ContentViewModel
     
     public var body: some View {
