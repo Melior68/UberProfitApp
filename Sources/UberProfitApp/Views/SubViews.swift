@@ -77,12 +77,81 @@ public struct OperationTabView: View {
                 quickHowItWorksCard
             }
 
-            // Simplified for brevity, will expand in next iteration if needed
-            Text("Painel de Controle Ativo")
-                .font(.headline)
-            
-            // ... (Add BroadcastPickerRepresentable and PiPLayerContainerView here)
+            pipPreviewSection
+
+            if let candidate = viewModel.latestAnalysis ?? viewModel.lastSeenAnalysis {
+                quickAcceptLastRideBar(for: candidate)
+            }
+            shiftControlsSection
+            shiftStatsSection
         }
+    }
+    
+    private var pipPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Monitoramento ao Vivo", systemImage: "dot.radiowaves.left.and.right")
+                    .font(.headline)
+                Spacer()
+                Circle()
+                    .fill(viewModel.udpListener.broadcastActive ? Color.green : (viewModel.udpListener.isListening ? Color.orange : Color.red))
+                    .frame(width: 10, height: 10)
+            }
+            
+            ZStack {
+                PiPLayerContainerView(displayLayer: viewModel.pipManager.displayLayer)
+                    .frame(height: 155)
+            }
+            .frame(height: 155)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(viewModel.udpListener.broadcastActive ? Color.green.opacity(0.6) : Color.primary.opacity(0.12), lineWidth: 2))
+        }
+    }
+    
+    private func quickAcceptLastRideBar(for item: RideAnalysis) -> some View {
+        let alreadyAccepted = viewModel.isRideAlreadyAccepted(item)
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Última: [\(item.offer.appSource)] \(formatBRL(item.offer.fareBRL))")
+                    .font(.caption.bold())
+            }
+            Spacer()
+            Button {
+                viewModel.acceptRide(item)
+            } label: {
+                Text(alreadyAccepted ? "Já nos Ganhos" : "Aceitei")
+            }
+            .disabled(alreadyAccepted)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+    
+    private var shiftControlsSection: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14).fill(viewModel.udpListener.broadcastActive ? Color.red : Color.blue)
+                BroadcastPickerRepresentable()
+                    .opacity(0.01)
+                Text(viewModel.udpListener.broadcastActive ? "Parar Leitor" : "Iniciar Leitor")
+                    .foregroundStyle(.white).bold()
+            }
+            .frame(height: 56)
+            
+            Button {
+                viewModel.pipManager.togglePiP()
+            } label: {
+                Text(viewModel.pipManager.isPiPActive ? "Fechar PiP" : "Abrir PiP")
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+    
+    private var shiftStatsSection: some View {
+        Text("Resumo do Turno Ativo")
+            .font(.caption)
+            .padding()
     }
     
     private var quickHowItWorksCard: some View {
