@@ -63,4 +63,8 @@ public final class RidePersistenceService {
               let decoded = try? JSONDecoder().decode([ArchivedTurn].self, from: data) else { return [] }
         return decoded
     }
+
+    public func clearArchivedTurns() {
+        UserDefaults.standard.removeObject(forKey: "UberProfit_TurnHistory_V1")
+    }
 }

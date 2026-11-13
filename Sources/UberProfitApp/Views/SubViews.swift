@@ -1204,9 +1204,10 @@ public struct OCRDebugSheetView: View {
     }
 }
 
-// MARK: - ABA 6: HISTÓRICO DE TURNOS FECHADOS
+// MARK: - ABA 6: HISTÓRICO DE TURNOS FECHADOS (EXTRATO)
 public struct TurnHistoryTabView: View {
     @ObservedObject var viewModel: ContentViewModel
+    @State private var expandedTurnId: UUID? = nil
 
     public init(viewModel: ContentViewModel) {
         self.viewModel = viewModel
@@ -1219,39 +1220,111 @@ public struct TurnHistoryTabView: View {
                     Image(systemName: "calendar.badge.clock")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                    Text("Nenhum turno arquivado ainda.")
-                        .font(.subheadline)
+                    Text("Nenhum turno arquivado no extrato ainda.")
+                        .font(.subheadline.bold())
                         .foregroundStyle(.secondary)
+                    Text("Ao final de cada dia (ou ao tocar em 'Finalizar Turno' nos Ganhos), o resumo completo de corridas e lucros aparecerá aqui como um extrato.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
+                .padding(.horizontal, 16)
             } else {
                 HStack {
-                    Text("\(viewModel.archivedTurns.count) Turnos Encerrados")
+                    Text("\(viewModel.archivedTurns.count) Turnos no Extrato")
                         .font(.subheadline.bold())
                     Spacer()
+                    Button("Limpar Extrato", role: .destructive) {
+                        viewModel.clearArchivedTurns()
+                    }
+                    .font(.caption.bold())
                 }
 
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     ForEach(viewModel.archivedTurns) { turn in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(turn.date, style: .date)
-                                    .font(.headline)
-                                Spacer()
-                                Text(turn.date, style: .time)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        let isExpanded = expandedTurnId == turn.id
+                        let turnGross = turn.rides.map { $0.offer.fareBRL }.reduce(0, +)
+                        let turnFuel = turn.rides.map { $0.fuelCostBRL }.reduce(0, +)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    expandedTurnId = (isExpanded ? nil : turn.id)
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(turn.date, style: .date)
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Text(turn.date, style: .time)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                            .font(.caption.bold())
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    HStack {
+                                        Label(viewModel.formatBRL(turn.totalNetProfit), systemImage: "dollarsign.circle.fill")
+                                            .font(.subheadline.bold())
+                                            .foregroundStyle(.green)
+                                        Spacer()
+                                        Text("\(turn.rides.count) corridas aceitas")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                             }
-                            
-                            HStack {
-                                Label(viewModel.formatBRL(turn.totalNetProfit), systemImage: "dollarsign.circle.fill")
-                                    .bold()
-                                    .foregroundStyle(.green)
-                                Spacer()
-                                Text("\(turn.rides.count) corridas")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            .buttonStyle(.plain)
+
+                            if isExpanded {
+                                Divider()
+
+                                HStack {
+                                    Text("Bruto: \(viewModel.formatBRL(turnGross))")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text("Gasolina: -\(viewModel.formatBRL(turnFuel))")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.orange)
+                                }
+                                .padding(.vertical, 2)
+
+                                Divider()
+
+                                VStack(spacing: 6) {
+                                    ForEach(turn.rides) { ride in
+                                        HStack(spacing: 8) {
+                                            Text(ride.offer.appSource)
+                                                .font(.caption2.weight(.heavy))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(ride.offer.appSource == "99" ? Color.orange.opacity(0.2) : Color.blue.opacity(0.2))
+                                                .foregroundStyle(ride.offer.appSource == "99" ? .orange : .blue)
+                                                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                                            Text(viewModel.formatTime(ride.offer.timestamp))
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+
+                                            Text(String(format: "%.1f km • %d min", ride.offer.totalDistanceKm, ride.offer.totalMinutes).replacingOccurrences(of: ".", with: ","))
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+
+                                            Spacer()
+
+                                            Text("+\(viewModel.formatBRL(ride.netProfitBRL))")
+                                                .font(.caption.bold())
+                                                .foregroundStyle(.green)
+                                        }
+                                        .padding(.vertical, 2)
+                                    }
+                                }
                             }
                         }
                         .padding(12)

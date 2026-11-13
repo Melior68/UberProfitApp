@@ -115,7 +115,7 @@ public final class ContentViewModel: ObservableObject {
 
         udpListener.onOfferReceived = { [weak self] offer in
             Task { @MainActor in
-                self?.processIncomingOffer(offer)
+                self?.processIncomingOffer(offer, recordInHistory: true)
             }
         }
 
@@ -139,13 +139,16 @@ public final class ContentViewModel: ObservableObject {
         udpListener.startListening()
     }
 
-    public func processIncomingOffer(_ offer: RideOfferPayload) {
+    public func processIncomingOffer(_ offer: RideOfferPayload, recordInHistory: Bool = true) {
         let settings = currentSettings
         let analysis = ProfitCalculator.evaluate(offer: offer, settings: settings)
         self.latestAnalysis = analysis
         self.lastSeenAnalysis = analysis
-        self.history.insert(analysis, at: 0)
-        self.persistence.saveHistory(Array(self.history.prefix(100)))
+        
+        if recordInHistory {
+            self.history.insert(analysis, at: 0)
+            self.persistence.saveHistory(Array(self.history.prefix(100)))
+        }
 
         self.pipManager.updateCard(with: analysis, displayMode: self.config.primaryMetricDisplay)
 
@@ -187,6 +190,11 @@ public final class ContentViewModel: ObservableObject {
     public func clearHistory() {
         history.removeAll()
         persistence.saveHistory(history)
+    }
+
+    public func clearArchivedTurns() {
+        persistence.clearArchivedTurns()
+        self.archivedTurns = []
     }
 
     public func isRideAlreadyAccepted(_ ride: RideAnalysis) -> Bool {
@@ -234,7 +242,7 @@ public final class ContentViewModel: ObservableObject {
             rawRecognizedText: rawText,
             timestamp: Date().timeIntervalSince1970
         )
-        processIncomingOffer(mock)
+        processIncomingOffer(mock, recordInHistory: false)
     }
 
     // Formatadores
