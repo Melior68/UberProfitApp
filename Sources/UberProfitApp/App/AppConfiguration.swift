@@ -8,6 +8,9 @@ public final class AppConfiguration: ObservableObject {
     @AppStorage("fuelPriceBRLPerLiter") public var fuelPriceBRLPerLiter: Double = 6.35
     @AppStorage("evaluateUsingNetProfit") public var evaluateUsingNetProfit: Bool = false
 
+    @AppStorage("minFareBRL") public var minFareBRL: Double = 10.0
+    @AppStorage("maxPickupDistanceKm") public var maxPickupDistanceKm: Double = 3.0
+    
     @AppStorage("dailyNetGoalBRL") public var dailyNetGoalBRL: Double = 250.00
     @AppStorage("extraDailyExpenseBRL") public var extraDailyExpenseBRL: Double = 0.00
     @AppStorage("autoDetectAcceptedRides") public var autoDetectAcceptedRides: Bool = true

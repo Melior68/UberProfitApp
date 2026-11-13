@@ -128,7 +128,7 @@ public enum RideVerdict: String, Codable, Sendable {
 
 /// Resultado completo do cálculo de lucratividade (persistível em JSON / UserDefaults)
 public struct RideAnalysis: Identifiable, Codable, Sendable, Equatable {
-    public var id: UUID
+    public var id: String { "\(offer.appSource)-\(offer.timestamp)" }
     public let offer: RideOfferPayload
     public let grossPerKm: Double
     public let grossPerHour: Double
@@ -138,8 +138,11 @@ public struct RideAnalysis: Identifiable, Codable, Sendable, Equatable {
     public let netPerHour: Double
     public let verdict: RideVerdict
 
+    enum CodingKeys: String, CodingKey {
+        case offer, grossPerKm, grossPerHour, fuelCostBRL, netProfitBRL, netPerKm, netPerHour, verdict
+    }
+
     public init(
-        id: UUID = UUID(),
         offer: RideOfferPayload,
         grossPerKm: Double,
         grossPerHour: Double,
@@ -149,7 +152,6 @@ public struct RideAnalysis: Identifiable, Codable, Sendable, Equatable {
         netPerHour: Double,
         verdict: RideVerdict
     ) {
-        self.id = id
         self.offer = offer
         self.grossPerKm = grossPerKm
         self.grossPerHour = grossPerHour
@@ -165,6 +167,8 @@ public struct RideAnalysis: Identifiable, Codable, Sendable, Equatable {
 public struct DriverSettings: Sendable, Equatable {
     public var targetBRLPerKm: Double
     public var targetBRLPerHour: Double
+    public var minFareBRL: Double
+    public var maxPickupDistanceKm: Double
     public var carConsumptionKmPerLiter: Double
     public var fuelPriceBRLPerLiter: Double
     public var voiceAlertsEnabled: Bool
@@ -176,6 +180,8 @@ public struct DriverSettings: Sendable, Equatable {
     public init(
         targetBRLPerKm: Double = 2.00,
         targetBRLPerHour: Double = 40.00,
+        minFareBRL: Double = 10.0,
+        maxPickupDistanceKm: Double = 3.0,
         carConsumptionKmPerLiter: Double = 10.0,
         fuelPriceBRLPerLiter: Double = 6.35,
         voiceAlertsEnabled: Bool = true,
@@ -186,6 +192,8 @@ public struct DriverSettings: Sendable, Equatable {
     ) {
         self.targetBRLPerKm = targetBRLPerKm
         self.targetBRLPerHour = targetBRLPerHour
+        self.minFareBRL = minFareBRL
+        self.maxPickupDistanceKm = maxPickupDistanceKm
         self.carConsumptionKmPerLiter = carConsumptionKmPerLiter
         self.fuelPriceBRLPerLiter = fuelPriceBRLPerLiter
         self.voiceAlertsEnabled = voiceAlertsEnabled
@@ -219,11 +227,15 @@ public struct ProfitCalculator: Sendable {
 
         let meetsKmTarget = referencePerKm >= settings.targetBRLPerKm
         let meetsHourTarget = referencePerHour >= settings.targetBRLPerHour
+        
+        // Novos Filtros Inteligentes
+        let passesMinFare = offer.fareBRL >= settings.minFareBRL
+        let passesPickupDist = offer.pickupDistanceKm <= settings.maxPickupDistanceKm
 
         let verdict: RideVerdict
-        if meetsKmTarget && meetsHourTarget {
+        if meetsKmTarget && meetsHourTarget && passesMinFare && passesPickupDist {
             verdict = .approved
-        } else if meetsKmTarget || meetsHourTarget || (referencePerKm >= settings.targetBRLPerKm * 0.85 && referencePerHour >= settings.targetBRLPerHour * 0.85) {
+        } else if (meetsKmTarget || meetsHourTarget) && passesMinFare && passesPickupDist {
             verdict = .warning
         } else {
             verdict = .rejected
