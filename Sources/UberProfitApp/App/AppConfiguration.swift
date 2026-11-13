@@ -20,6 +20,7 @@ public final class AppConfiguration: ObservableObject {
     @AppStorage("voiceSpeechRate") public var voiceSpeechRate: Double = 0.54
     @AppStorage("visualAlertModeRaw") public var visualAlertModeRaw: String = VisualAlertMode.notificationOnly.rawValue
     @AppStorage("primaryMetricDisplayRaw") public var primaryMetricDisplayRaw: String = PrimaryMetricDisplay.gross.rawValue
+    @AppStorage("showQuickGuide") public var showQuickGuide: Bool = true
     @AppStorage("currentTurnDate") public var currentTurnDate: String = ""
 
     public var visualAlertMode: VisualAlertMode {
