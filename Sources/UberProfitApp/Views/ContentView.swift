@@ -82,6 +82,8 @@ public struct ContentView: View {
                             CustomizationTabView(viewModel: viewModel)
                         case .history:
                             HistoryTabView(viewModel: viewModel)
+                        case .turns:
+                            TurnHistoryTabView(viewModel: viewModel)
                         }
                     }
                     .padding()

@@ -8,6 +8,7 @@ public enum AppSectionTab: String, CaseIterable, Sendable {
     case goals = "Metas"
     case customize = "Alertas"
     case history = "Histórico"
+    case turns = "Turnos"
 
     public var icon: String {
         switch self {
@@ -16,6 +17,7 @@ public enum AppSectionTab: String, CaseIterable, Sendable {
         case .goals: return "slider.horizontal.3"
         case .customize: return "paintbrush.pointed.fill"
         case .history: return "clock.arrow.circlepath"
+        case .turns: return "calendar.badge.clock"
         }
     }
 }
@@ -37,6 +39,7 @@ public final class ContentViewModel: ObservableObject {
     @Published public var lastSeenAnalysis: RideAnalysis?
     @Published public var history: [RideAnalysis] = []
     @Published public var acceptedRides: [RideAnalysis] = []
+    @Published public var archivedTurns: [RidePersistenceService.ArchivedTurn] = []
     @Published public var selectedItemForOCRDebug: RideAnalysis?
 
     // Modal para adicionar corrida manual na aba Ganhos
@@ -49,6 +52,7 @@ public final class ContentViewModel: ObservableObject {
     public init() {
         self.history = persistence.loadHistory()
         self.acceptedRides = persistence.loadAcceptedRides()
+        self.archivedTurns = persistence.loadArchivedTurns()
         self.lastSeenAnalysis = self.history.first
         
         checkAndResetDailyTurn()
@@ -168,6 +172,7 @@ public final class ContentViewModel: ObservableObject {
 
     public func finishTurn() {
         persistence.archiveTurn(acceptedRides)
+        self.archivedTurns = persistence.loadArchivedTurns()
         acceptedRides.removeAll()
         config.extraDailyExpenseBRL = 0.0
         persistence.saveAcceptedRides(acceptedRides)

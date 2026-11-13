@@ -1203,3 +1203,63 @@ public struct OCRDebugSheetView: View {
         .presentationDetents([.medium])
     }
 }
+
+// MARK: - ABA 6: HISTÓRICO DE TURNOS FECHADOS
+public struct TurnHistoryTabView: View {
+    @ObservedObject var viewModel: ContentViewModel
+
+    public init(viewModel: ContentViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if viewModel.archivedTurns.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("Nenhum turno arquivado ainda.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            } else {
+                HStack {
+                    Text("\(viewModel.archivedTurns.count) Turnos Encerrados")
+                        .font(.subheadline.bold())
+                    Spacer()
+                }
+
+                VStack(spacing: 10) {
+                    ForEach(viewModel.archivedTurns) { turn in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(turn.date, style: .date)
+                                    .font(.headline)
+                                Spacer()
+                                Text(turn.date, style: .time)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            HStack {
+                                Label(viewModel.formatBRL(turn.totalNetProfit), systemImage: "dollarsign.circle.fill")
+                                    .bold()
+                                    .foregroundStyle(.green)
+                                Spacer()
+                                Text("\(turn.rides.count) corridas")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+            }
+        }
+    }
+}
