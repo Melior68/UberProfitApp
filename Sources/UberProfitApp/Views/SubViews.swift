@@ -653,8 +653,8 @@ public struct EarningsTabView: View {
                         .font(.subheadline.bold())
                     Spacer()
                     if !viewModel.acceptedRides.isEmpty {
-                        Button("Zerar Turno", role: .destructive) {
-                            viewModel.clearTurn()
+                        Button("Finalizar Turno", role: .destructive) {
+                            viewModel.finishTurn()
                         }
                         .font(.caption.bold())
                     }

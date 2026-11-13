@@ -50,6 +50,27 @@ public final class ContentViewModel: ObservableObject {
         self.history = persistence.loadHistory()
         self.acceptedRides = persistence.loadAcceptedRides()
         self.lastSeenAnalysis = self.history.first
+        
+        checkAndResetDailyTurn()
+    }
+
+    private func checkAndResetDailyTurn() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        
+        if config.currentTurnDate.isEmpty {
+            config.currentTurnDate = today
+            return
+        }
+        
+        if config.currentTurnDate != today {
+            // É um novo dia! Arquiva o turno anterior se houver algo
+            if !acceptedRides.isEmpty {
+                finishTurn()
+            }
+            config.currentTurnDate = today
+        }
     }
 
     public var currentSettings: DriverSettings {
@@ -142,6 +163,13 @@ public final class ContentViewModel: ObservableObject {
 
     public func removeAcceptedRide(_ ride: RideAnalysis) {
         acceptedRides.removeAll(where: { $0.id == ride.id })
+        persistence.saveAcceptedRides(acceptedRides)
+    }
+
+    public func finishTurn() {
+        persistence.archiveTurn(acceptedRides)
+        acceptedRides.removeAll()
+        config.extraDailyExpenseBRL = 0.0
         persistence.saveAcceptedRides(acceptedRides)
     }
 
